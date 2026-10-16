@@ -1,0 +1,12 @@
+# Gyanify agent rules
+- Flutter app in app/, Supabase in supabase/. Branch: feat/app-foundation.
+- Flutter: $HOME/.local/share/gyanify/flutter/bin. Set ANDROID_HOME and ANDROID_SDK_ROOT to $HOME/.local/share/gyanify/android-sdk.
+- Use `set -o pipefail` whenever piping to tee. A step passed only if its exit code is 0.
+- Never claim something works without showing the command and the last lines of its output.
+- APK builds: GRADLE_OPTS='-Dorg.gradle.jvmargs=-Xmx1536m -Dorg.gradle.workers.max=1'. If the kernel_snapshot step fails, run flutter clean + flutter pub get and retry once. If it fails again, stop and report the error with `free -h` and `df -h`.
+- After every build, report the APK path, size, sha256 and modified time, and confirm it is newer than the last source edit.
+- Never commit .env or config files with real values, keystores, service_role keys, or APKs. Check `git diff --cached --name-only` before every commit.
+- Never edit a migration that has been applied to a live project. Add a new timestamped file in supabase/migrations/.
+- After committing, report `git status -sb`. If a push fails, report the exact error and stop. Don't try to work around authentication.
+- Every final report has three sections: verified locally / verified on live backend / not verified.
+- Update PROJECT_STATUS.md at the end of each milestone.
