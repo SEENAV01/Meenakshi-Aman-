@@ -9,6 +9,7 @@
 - Supabase Row Level Security for teacher-owned courses/batches, own enrollment requests, teacher review, approved-student materials, and private PDF storage.
 - Enrollment review trigger and constraints prevent students from changing request state and prevent teachers from rewriting enrollment identity.
 - Android deep-link registration for `gyanify://login-callback/`.
+- Live Classes remains visible in both role menus; class scheduling and Jitsi host/join are still incomplete.
 
 ## Actually verified locally
 

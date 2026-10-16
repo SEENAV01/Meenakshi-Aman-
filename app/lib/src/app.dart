@@ -472,11 +472,13 @@ class _MainShellState extends State<_MainShell> {
         ? [
             _TeacherCoursesPage(backend: widget.backend),
             _TeacherRequestsPage(backend: widget.backend),
+            const _LiveClassesPage(),
             _ProfilePage(displayName: widget.displayName),
           ]
         : [
             _CatalogPage(backend: widget.backend),
             _StudentLearningPage(backend: widget.backend),
+            const _LiveClassesPage(),
             _ProfilePage(displayName: widget.displayName),
           ];
     final destinations = isTeacher
@@ -488,6 +490,10 @@ class _MainShellState extends State<_MainShell> {
             NavigationDestination(
               icon: Icon(Icons.how_to_reg_outlined),
               label: 'Requests',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.video_camera_front_outlined),
+              label: 'Live Classes',
             ),
             NavigationDestination(
               icon: Icon(Icons.person_outline),
@@ -502,6 +508,10 @@ class _MainShellState extends State<_MainShell> {
             NavigationDestination(
               icon: Icon(Icons.menu_book_outlined),
               label: 'My learning',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.video_camera_front_outlined),
+              label: 'Live Classes',
             ),
             NavigationDestination(
               icon: Icon(Icons.person_outline),
@@ -519,6 +529,19 @@ class _MainShellState extends State<_MainShell> {
       ),
     );
   }
+}
+
+class _LiveClassesPage extends StatelessWidget {
+  const _LiveClassesPage();
+
+  @override
+  Widget build(BuildContext context) => const _EmptyState(
+    icon: Icons.video_camera_front_outlined,
+    title: 'Live classes',
+    detail:
+        'Scheduling and joining a Jitsi class are not connected yet. '
+        'The Jitsi plugin remains in this development build.',
+  );
 }
 
 class _ProfilePage extends StatelessWidget {
