@@ -1,6 +1,7 @@
 # Gyanify agent rules
 
-Visible app name: **Meenakshi Amman Hindi Classes** (title, login, headers, release notes,
+Visible app name: **Meenakshi Amman Hindi Classes** (title, login, headers, release notes, install/Settings;
+home-screen icon label is the short "Meenakshi", chosen by the owner;
 APK file `Meenakshi-Amman-Hindi-Classes.apk`). Internal IDs keep `gyanify`: Android package
 `com.gyanify.learning`, redirect `gyanify://login-callback/`, database and secret names.
 

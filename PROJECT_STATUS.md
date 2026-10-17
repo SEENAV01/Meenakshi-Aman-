@@ -85,6 +85,21 @@ Not verified:
 - Password-reset emails: Supabase's built-in email only reaches project team members; students
   need custom SMTP for "Forgot password" to work.
 
+### 2026-10-17 — dialog crash fix + rename
+
+- Bug in 1.0.7: Create course → Save showed a red screen. `showTextForm` disposed its
+  TextEditingControllers when the dialog Future completed, while the TextFields were still
+  animating out. Now a StatefulWidget (`lib/src/dialogs.dart`) disposes them in `dispose()`.
+  Verified locally: `flutter test test/dialogs_test.dart` failed 7 tests on the old code
+  ("A TextEditingController was used after being disposed", dialogs.dart:221) and passes 9/9
+  after the fix (course/batch/PDF form, video form, schedule class, delete confirm; Save and Cancel).
+- Visible name is now "Meenakshi Amman Hindi Classes" (app title, login, notice, header,
+  profile, Android install/Settings label, release notes, APK file
+  `Meenakshi-Amman-Hindi-Classes.apk`, README). Home-screen icon label: "Meenakshi"
+  (owner's choice, the full name would be cut). Internal IDs unchanged.
+- Verified locally: `flutter analyze` no issues; `flutter test` 18 passed, 1 skipped.
+- Not verified: how the label and header look on a real phone.
+
 ## Owner setup required
 
 See the numbered list in the final report of the 2026-10-17 session (also repeated in

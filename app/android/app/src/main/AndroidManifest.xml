@@ -6,8 +6,11 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         tools:replace="android:label">
+        <!-- Home-screen label: short so it is never cut off (owner chose "Meenakshi").
+             The full name above is used by the install screen and Settings. -->
         <activity
             android:name=".MainActivity"
+            android:label="Meenakshi"
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity=""
