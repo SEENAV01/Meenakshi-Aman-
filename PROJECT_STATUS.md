@@ -30,7 +30,7 @@ Removed: embedded Jitsi (`jitsi_meet_flutter_sdk`), and the unused `record` / `a
 
 ## CI (GitHub Actions)
 
-- `android-apk.yml` — on every push to `main`: `flutter analyze`, `flutter test`, build the APK,
+- `android-apk.yml` — on every push to `main` (pure docs changes skipped): `flutter analyze`, `flutter test`, build the APK,
   verify its signature, publish `gyanify.apk` on the Release named `latest`.
   Release-signed when the four `ANDROID_*` secrets exist, otherwise a DEBUG test build
   (the release notes say which).
@@ -57,6 +57,18 @@ Verified locally (this cloud session, Flutter 3.47.7, local `supabase start` sta
   approve, view + download PDF with `Content-Disposition`, live class link, revoke, delete) → passed.
 - `flutter analyze` → No issues found. `flutter test` → 6 passed, 1 skipped (integration, needs env).
 - `scripts/create-release-keystore.sh` creates a PKCS12 key and refuses to overwrite an existing one.
+- A local Android release build could not finish here: Maven Central answered
+  `429 Too Many Requests` twice. Android builds are proven in GitHub Actions instead (below).
+
+Verified in GitHub Actions (https://github.com/SEENAV01/Meenakshi-Aman-/actions):
+- Supabase security test run 39006631972, job `local`: both migrations applied on a fresh
+  Supabase, `43 passed, 0 failed`, integration test `1 test passed`. Job `live`: skipped (no secrets).
+- Android APK run for commit `e58991f`: analyze + tests passed, DEBUG test build published on
+  Release `latest` as `gyanify.apk` (149.8 MB, not connected to Supabase because the secrets
+  are missing; the release notes say so).
+- Android APK run 39007636008 (`release_check`): release APK built and signed through
+  `android/key.properties` with a throwaway key (`apksigner`: `CN=Throwaway check`), 76.4 MB,
+  nothing published. So the real key path works once the four `ANDROID_*` secrets exist.
 
 Verified on live backend:
 - Nothing yet. No live Supabase URL/key is available to this session; the `live` job runs as soon

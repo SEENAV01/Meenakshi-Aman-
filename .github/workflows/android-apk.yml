@@ -12,6 +12,9 @@ name: Android APK
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
     inputs:
       release_check:
