@@ -33,6 +33,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Visible name (GitHub turns spaces in asset names into dots, so dashes).
+      APP_NAME: Meenakshi Amman Hindi Classes
+      APK_NAME: Meenakshi-Amman-Hindi-Classes.apk
     defaults:
       run:
         working-directory: app
@@ -137,15 +141,15 @@ jobs:
             --dart-define=SUPABASE_AUTH_REDIRECT_URL=gyanify://login-callback/ \
             --build-name="1.0.$GITHUB_RUN_NUMBER" \
             --build-number="$GITHUB_RUN_NUMBER"
-          cp "build/app/outputs/flutter-apk/app-$BUILD_KIND.apk" "$RUNNER_TEMP/gyanify.apk"
+          cp "build/app/outputs/flutter-apk/app-$BUILD_KIND.apk" "$RUNNER_TEMP/$APK_NAME"
           rm -f android/key.properties android/app/gyanify-release.jks
 
       - name: Verify APK signature
         run: |
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
-          "$APKSIGNER" verify --print-certs "$RUNNER_TEMP/gyanify.apk" | tee "$RUNNER_TEMP/signature.txt"
-          cd "$RUNNER_TEMP" && sha256sum gyanify.apk | tee gyanify.apk.sha256
-          ls -l gyanify.apk
+          "$APKSIGNER" verify --print-certs "$RUNNER_TEMP/$APK_NAME" | tee "$RUNNER_TEMP/signature.txt"
+          cd "$RUNNER_TEMP" && sha256sum "$APK_NAME" | tee "$APK_NAME.sha256"
+          ls -l "$APK_NAME"
 
       - name: Publish to the "latest" release
         if: env.CHECK_ONLY != 'yes'
@@ -164,17 +168,17 @@ jobs:
             BACKEND="NOT connected to Supabase (secrets missing). The app only shows a setup notice."
           fi
           cat > "$RUNNER_TEMP/notes.md" <<EOF
-          **Gyanify 1.0.$GITHUB_RUN_NUMBER** from commit \`${GITHUB_SHA::7}\`
+          **$APP_NAME 1.0.$GITHUB_RUN_NUMBER** from commit \`${GITHUB_SHA::7}\`
 
           - $KIND
           - $BACKEND
           - Signing certificate SHA-256: \`$CERT\`
-          - APK SHA-256: \`$(cut -d' ' -f1 "$RUNNER_TEMP/gyanify.apk.sha256")\`
+          - APK SHA-256: \`$(cut -d' ' -f1 "$RUNNER_TEMP/$APK_NAME.sha256")\`
 
-          Download **gyanify.apk** below, then send that file on WhatsApp.
+          Download **$APK_NAME** below, then send that file on WhatsApp.
           EOF
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest "$RUNNER_TEMP/gyanify.apk" "$RUNNER_TEMP/gyanify.apk.sha256" \
+          gh release create latest "$RUNNER_TEMP/$APK_NAME" "$RUNNER_TEMP/$APK_NAME.sha256" \
             --title latest --target "$GITHUB_SHA" --notes-file "$RUNNER_TEMP/notes.md" --latest
           echo "## APK published" >> "$GITHUB_STEP_SUMMARY"
           cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"

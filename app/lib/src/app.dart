@@ -8,7 +8,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 
 import 'backend.dart';
+import 'dialogs.dart';
 import 'links.dart';
+
+/// The name people see. Internal IDs (package name, gyanify:// scheme,
+/// database) keep the old "gyanify" name on purpose.
+const appName = 'Meenakshi Amman Hindi Classes';
 
 const _authRedirectUrl = String.fromEnvironment(
   'SUPABASE_AUTH_REDIRECT_URL',
@@ -23,7 +28,7 @@ class GyanifyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'GYANIFY',
+      title: appName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -57,7 +62,7 @@ class _BackendNotice extends StatelessWidget {
             children: [
               Icon(Icons.school_outlined, size: 40),
               SizedBox(height: 20),
-              Text('GYANIFY', style: TextStyle(fontSize: 28)),
+              Text(appName, style: TextStyle(fontSize: 28)),
               SizedBox(height: 12),
               Text(
                 'Backend configuration is missing. Sign-in and teaching '
@@ -276,7 +281,7 @@ class _AuthPageState extends State<_AuthPage> {
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      'GYANIFY',
+                      appName,
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
@@ -523,7 +528,7 @@ class _MainShellState extends State<_MainShell> {
             ),
           ];
     return Scaffold(
-      appBar: AppBar(title: Text(isTeacher ? 'GYANIFY · Teacher' : 'GYANIFY')),
+      appBar: AppBar(title: AppHeaderTitle(isTeacher: isTeacher)),
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
@@ -531,6 +536,37 @@ class _MainShellState extends State<_MainShell> {
             setState(() => _selectedIndex = index),
         destinations: destinations,
       ),
+    );
+  }
+}
+
+/// Two-line app bar title: the full app name, and who is signed in.
+class AppHeaderTitle extends StatelessWidget {
+  const AppHeaderTitle({required this.isTeacher, super.key});
+
+  final bool isTeacher;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Never cut the name: on a narrow phone or with a large font setting
+        // it shrinks a little instead.
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(appName, maxLines: 1, style: theme.textTheme.titleMedium),
+        ),
+        Text(
+          isTeacher ? 'Teacher' : 'Student',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.primary,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -562,9 +598,9 @@ class _LiveClassesPageState extends State<_LiveClassesPage> {
         _showMessage(context, 'Create a course and a batch first.');
         return;
       }
-      final input = await showDialog<_LiveClassInput>(
+      final input = await showDialog<LiveClassInput>(
         context: context,
-        builder: (_) => _ScheduleClassDialog(batches: batches),
+        builder: (_) => ScheduleClassDialog(batches: batches),
       );
       if (input == null) return;
       await widget.backend.scheduleLiveClass(
@@ -582,7 +618,7 @@ class _LiveClassesPageState extends State<_LiveClassesPage> {
   }
 
   Future<void> _delete(LiveClass liveClass) async {
-    final confirmed = await _confirm(
+    final confirmed = await showConfirmDialog(
       context,
       title: 'Delete this class?',
       detail: '"${liveClass.title}" will disappear for students.',
@@ -701,196 +737,6 @@ class _LiveClassesPageState extends State<_LiveClassesPage> {
   );
 }
 
-class _LiveClassInput {
-  const _LiveClassInput({
-    required this.batchId,
-    required this.title,
-    required this.description,
-    required this.startsAt,
-    required this.meetingUrl,
-  });
-
-  final String batchId;
-  final String title;
-  final String description;
-  final DateTime startsAt;
-  final String meetingUrl;
-}
-
-class _ScheduleClassDialog extends StatefulWidget {
-  const _ScheduleClassDialog({required this.batches});
-
-  final List<LearningBatch> batches;
-
-  @override
-  State<_ScheduleClassDialog> createState() => _ScheduleClassDialogState();
-}
-
-class _ScheduleClassDialogState extends State<_ScheduleClassDialog> {
-  final _title = TextEditingController();
-  final _link = TextEditingController();
-  final _description = TextEditingController();
-  late String _batchId = widget.batches.first.id;
-  DateTime? _date;
-  TimeOfDay? _time;
-  String? _error;
-
-  @override
-  void dispose() {
-    _title.dispose();
-    _link.dispose();
-    _description.dispose();
-    super.dispose();
-  }
-
-  Future<void> _pickDate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _date ?? now,
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: now.add(const Duration(days: 365)),
-    );
-    if (picked != null) setState(() => _date = picked);
-  }
-
-  Future<void> _pickTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: _time ?? TimeOfDay.now(),
-    );
-    if (picked != null) setState(() => _time = picked);
-  }
-
-  void _save() {
-    final date = _date;
-    final time = _time;
-    String? error;
-    if (_title.text.trim().isEmpty) {
-      error = 'Enter a class title.';
-    } else if (!isMeetingUrl(_link.text)) {
-      error = 'Paste a Google Meet or Zoom link starting with https://';
-    } else if (date == null || time == null) {
-      error = 'Choose the date and time.';
-    }
-    if (error != null) {
-      setState(() => _error = error);
-      return;
-    }
-    Navigator.pop(
-      context,
-      _LiveClassInput(
-        batchId: _batchId,
-        title: _title.text.trim(),
-        description: _description.text.trim(),
-        startsAt: DateTime(
-          date!.year,
-          date.month,
-          date.day,
-          time!.hour,
-          time.minute,
-        ),
-        meetingUrl: _link.text.trim(),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final localizations = MaterialLocalizations.of(context);
-    return AlertDialog(
-      title: const Text('Schedule live class'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButtonFormField<String>(
-              initialValue: _batchId,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Batch'),
-              items: [
-                for (final batch in widget.batches)
-                  DropdownMenuItem(
-                    value: batch.id,
-                    child: Text(
-                      '${batch.courseTitle} · ${batch.title}',
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => _batchId = value);
-              },
-            ),
-            TextField(
-              controller: _title,
-              maxLength: 200,
-              decoration: const InputDecoration(labelText: 'Class title'),
-            ),
-            TextField(
-              controller: _link,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                labelText: 'Google Meet or Zoom link',
-                hintText: 'https://meet.google.com/...',
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _pickDate,
-                    icon: const Icon(Icons.calendar_today, size: 18),
-                    label: Text(
-                      _date == null
-                          ? 'Date'
-                          : localizations.formatShortDate(_date!),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _pickTime,
-                    icon: const Icon(Icons.schedule, size: 18),
-                    label: Text(
-                      _time == null
-                          ? 'Time'
-                          : localizations.formatTimeOfDay(_time!),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            TextField(
-              controller: _description,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                labelText: 'Note for students (optional)',
-              ),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(onPressed: _save, child: const Text('Save')),
-      ],
-    );
-  }
-}
-
 class _ProfilePage extends StatelessWidget {
   const _ProfilePage({required this.displayName});
 
@@ -905,7 +751,7 @@ class _ProfilePage extends StatelessWidget {
         style: Theme.of(context).textTheme.headlineSmall,
       ),
       const SizedBox(height: 8),
-      const Text('Your account role is managed securely by GYANIFY.'),
+      const Text('Your account role is managed securely by $appName.'),
       const SizedBox(height: 24),
       OutlinedButton.icon(
         onPressed: () async {
@@ -1157,7 +1003,7 @@ class _TeacherCoursesPageState extends State<_TeacherCoursesPage> {
   }
 
   Future<void> _createCourse() async {
-    final values = await _showTextForm(
+    final values = await showTextForm(
       context,
       title: 'Create course',
       nameLabel: 'Course title',
@@ -1172,7 +1018,7 @@ class _TeacherCoursesPageState extends State<_TeacherCoursesPage> {
   }
 
   Future<void> _createBatch(LearningCourse course) async {
-    final values = await _showTextForm(
+    final values = await showTextForm(
       context,
       title: 'Add a batch to ${course.title}',
       nameLabel: 'Batch title',
@@ -1431,7 +1277,7 @@ class _MaterialsPageState extends State<_MaterialsPage> {
   }
 
   Future<void> _uploadPdf() async {
-    final input = await _showTextForm(
+    final input = await showTextForm(
       context,
       title: 'Upload a PDF',
       nameLabel: 'Material title',
@@ -1475,7 +1321,7 @@ class _MaterialsPageState extends State<_MaterialsPage> {
   }
 
   Future<void> _addVideo() async {
-    final input = await _showTextForm(
+    final input = await showTextForm(
       context,
       title: 'Add a YouTube video',
       nameLabel: 'Video title',
@@ -1553,7 +1399,7 @@ class _MaterialsPageState extends State<_MaterialsPage> {
   }
 
   Future<void> _delete(LearningMaterial material) async {
-    final confirmed = await _confirm(
+    final confirmed = await showConfirmDialog(
       context,
       title: 'Delete this material?',
       detail: '"${material.title}" will be removed for all students.',
@@ -1742,105 +1588,6 @@ class _PdfPage extends StatelessWidget {
     appBar: AppBar(title: Text(title)),
     body: PdfViewer.uri(Uri.parse(url)),
   );
-}
-
-/// Returns (name, description, link). The link field is shown only when
-/// [linkLabel] is given.
-Future<(String, String, String)?> _showTextForm(
-  BuildContext context, {
-  required String title,
-  required String nameLabel,
-  String? linkLabel,
-  String? Function(String value)? linkValidator,
-}) {
-  final name = TextEditingController();
-  final link = TextEditingController();
-  final description = TextEditingController();
-  final formKey = GlobalKey<FormState>();
-  return showDialog<(String, String, String)>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(title),
-      content: Form(
-        key: formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: name,
-                autofocus: true,
-                maxLength: 200,
-                decoration: InputDecoration(labelText: nameLabel),
-                validator: (value) =>
-                    value == null || value.trim().isEmpty ? 'Required' : null,
-              ),
-              if (linkLabel != null)
-                TextFormField(
-                  controller: link,
-                  keyboardType: TextInputType.url,
-                  decoration: InputDecoration(labelText: linkLabel),
-                  validator: (value) => linkValidator?.call(value ?? ''),
-                ),
-              TextField(
-                controller: description,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Description (optional)',
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () {
-            if (!formKey.currentState!.validate()) return;
-            Navigator.pop(dialogContext, (
-              name.text.trim(),
-              description.text.trim(),
-              link.text.trim(),
-            ));
-          },
-          child: const Text('Save'),
-        ),
-      ],
-    ),
-  ).whenComplete(() {
-    name.dispose();
-    link.dispose();
-    description.dispose();
-  });
-}
-
-Future<bool> _confirm(
-  BuildContext context, {
-  required String title,
-  required String detail,
-}) async {
-  final result = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(title),
-      content: Text(detail),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(dialogContext, true),
-          child: const Text('Delete'),
-        ),
-      ],
-    ),
-  );
-  return result ?? false;
 }
 
 /// Opens Meet, Zoom, YouTube or a download link outside the app.

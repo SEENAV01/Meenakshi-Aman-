@@ -31,7 +31,7 @@ Removed: embedded Jitsi (`jitsi_meet_flutter_sdk`), and the unused `record` / `a
 ## CI (GitHub Actions)
 
 - `android-apk.yml` — on every push to `main` (pure docs changes skipped): `flutter analyze`, `flutter test`, build the APK,
-  verify its signature, publish `gyanify.apk` on the Release named `latest`.
+  verify its signature, publish `Meenakshi-Amman-Hindi-Classes.apk` (until 1.0.7: `gyanify.apk`) on the Release named `latest`.
   Release-signed when the four `ANDROID_*` secrets exist, otherwise a DEBUG test build
   (the release notes say which).
 - `security-test.yml` — job `local`: starts a throwaway Supabase in the runner, applies all

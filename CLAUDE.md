@@ -1,5 +1,9 @@
 # Gyanify agent rules
 
+Visible app name: **Meenakshi Amman Hindi Classes** (title, login, headers, release notes,
+APK file `Meenakshi-Amman-Hindi-Classes.apk`). Internal IDs keep `gyanify`: Android package
+`com.gyanify.learning`, redirect `gyanify://login-callback/`, database and secret names.
+
 Gyanify is a coaching app: a teacher (`teacher_admin`) runs courses and batches,
 students sign up, request a batch, and get materials only after approval.
 The owner is a teacher, not a developer: talk in simple Hinglish, ask one

@@ -55,10 +55,10 @@ Repo kholiye → **Settings** → left mein **Secrets and variables** → **Acti
 
 12. Repo → **Actions** → *Android APK* → *Run workflow* → *Run workflow* (ya koi bhi naya push).
     Green tick aane tak ruko (~10 min).
-13. Phone par: repo → **Releases** → **latest** → `gyanify.apk` download → install
+13. Phone par: repo → **Releases** → **latest** → `Meenakshi-Amman-Hindi-Classes.apk` download → install
     ("unknown apps" allow karna padega). Release notes mein likha hoga
     *Release build* ya *TEST BUILD (debug)*.
-14. WhatsApp par students ko `gyanify.apk` **Document** ki tarah bhejiye.
+14. WhatsApp par students ko `Meenakshi-Amman-Hindi-Classes.apk` **Document** ki tarah bhejiye.
 
 ## E. Aapka teacher account
 
