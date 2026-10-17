@@ -70,8 +70,13 @@ Verified in GitHub Actions (https://github.com/SEENAV01/Meenakshi-Aman-/actions)
   `android/key.properties` with a throwaway key (`apksigner`: `CN=Throwaway check`), 76.4 MB,
   nothing published. So the real key path works once the four `ANDROID_*` secrets exist.
 
+- Android APK run 39011738960 (commit `9127521`, after the owner fixed the `SUPABASE_URL` secret):
+  log shows `Supabase config found for host: bthmlxzzcipctmseckvx.supabase.co`; Release `latest`
+  = Gyanify 1.0.7, "Connected to Supabase", still a DEBUG test build (no signing secrets yet).
+
 Verified on live backend:
-- Nothing yet. No live Supabase URL/key is available to this session; the `live` job runs as soon
+- The project host answers (`/auth/v1/health` → HTTP 401 "No API key found", i.e. it exists).
+- Nothing else yet. No live Supabase URL/key is available to this session; the `live` job runs as soon
   as the secrets are added.
 
 Not verified:
