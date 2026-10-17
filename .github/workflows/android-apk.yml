@@ -13,6 +13,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_check:
+        description: 'Only check the release build with a throwaway key (publishes nothing)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -53,6 +58,7 @@ jobs:
 
       - name: Prepare signing key
         env:
+          RELEASE_CHECK: ${{ inputs.release_check }}
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -68,6 +74,15 @@ jobs:
             } > android/key.properties
             echo "BUILD_KIND=release" >> "$GITHUB_ENV"
             echo "Release signing key found."
+          elif [ "$RELEASE_CHECK" = true ]; then
+            PW="$(openssl rand -hex 16)"
+            keytool -genkeypair -noprompt -keystore android/app/gyanify-release.jks -storetype PKCS12 \
+              -alias check -keyalg RSA -keysize 2048 -validity 1 -storepass "$PW" -keypass "$PW" \
+              -dname "CN=Throwaway check" >/dev/null 2>&1
+            printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=check\nstoreFile=gyanify-release.jks\n' "$PW" "$PW" > android/key.properties
+            echo "BUILD_KIND=release" >> "$GITHUB_ENV"
+            echo "CHECK_ONLY=yes" >> "$GITHUB_ENV"
+            echo "::notice::Release check with a throwaway key. Nothing will be published."
           else
             echo "BUILD_KIND=debug" >> "$GITHUB_ENV"
             echo "::warning title=Test build::Signing secrets are missing, so this is a DEBUG test build. Students will have to uninstall it before installing the real release."
@@ -90,7 +105,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
-          flutter build apk "--$BUILD_KIND" \
+          # Debug test builds skip x86 emulator code to stay small enough for WhatsApp.
+          EXTRA=""
+          if [ "$BUILD_KIND" = debug ]; then EXTRA="--target-platform=android-arm,android-arm64"; fi
+          flutter build apk "--$BUILD_KIND" $EXTRA \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
             --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \
             --dart-define=SUPABASE_AUTH_REDIRECT_URL=gyanify://login-callback/ \
@@ -107,6 +125,7 @@ jobs:
           ls -l gyanify.apk
 
       - name: Publish to the "latest" release
+        if: env.CHECK_ONLY != 'yes'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

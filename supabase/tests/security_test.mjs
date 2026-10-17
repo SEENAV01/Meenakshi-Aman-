@@ -8,7 +8,10 @@
 //   SECTEST_TEACHER_EMAIL      a teacher_admin account used only for this test
 //   SECTEST_TEACHER_PASSWORD
 // Optional:
-//   SECTEST_STUDENT_EMAIL_DOMAIN  domain for throwaway student accounts (default example.com)
+//   SECTEST_STUDENT_EMAIL_DOMAIN  domain for throwaway student accounts. By default they
+//                                 are plus-addresses of the teacher email
+//                                 (me+sectest-rejected-1a2b@gmail.com), so any mail
+//                                 would land in the owner's own inbox.
 //
 // Needs email confirmation OFF (sign-up must return a session).
 // Everything the test creates lives under a course titled "[SECTEST] ..." and is
@@ -30,7 +33,7 @@ const BASE = env('SUPABASE_URL').replace(/\/+$/, '');
 const KEY = env('SUPABASE_PUBLISHABLE_KEY');
 const TEACHER_EMAIL = env('SECTEST_TEACHER_EMAIL');
 const TEACHER_PASSWORD = env('SECTEST_TEACHER_PASSWORD');
-const STUDENT_DOMAIN = env('SECTEST_STUDENT_EMAIL_DOMAIN', 'example.com');
+const STUDENT_DOMAIN = process.env.SECTEST_STUDENT_EMAIL_DOMAIN || '';
 const BUCKET = 'learning-materials';
 const PREFIX = '[SECTEST]';
 const PDF_BYTES = Buffer.from(
@@ -96,7 +99,11 @@ async function signIn(email, password) {
 }
 
 async function signUpStudent(label, metadata = {}) {
-  const email = `sectest-${label}-${randomBytes(6).toString('hex')}@${STUDENT_DOMAIN}`;
+  const tag = `sectest-${label}-${randomBytes(4).toString('hex')}`;
+  const [local, domain] = TEACHER_EMAIL.split('@');
+  const email = STUDENT_DOMAIN
+    ? `${tag}@${STUDENT_DOMAIN}`
+    : `${local.split('+')[0]}+${tag}@${domain}`;
   const password = randomBytes(18).toString('base64url');
   const r = await call('POST', '/auth/v1/signup', {
     body: { email, password, data: { display_name: `${PREFIX} ${label}`, ...metadata } },

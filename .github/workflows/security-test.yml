@@ -112,4 +112,5 @@ jobs:
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
           SECTEST_TEACHER_EMAIL: ${{ secrets.SECTEST_TEACHER_EMAIL }}
           SECTEST_TEACHER_PASSWORD: ${{ secrets.SECTEST_TEACHER_PASSWORD }}
+          SECTEST_STUDENT_EMAIL_DOMAIN: ${{ vars.SECTEST_STUDENT_EMAIL_DOMAIN }}
         run: node supabase/tests/security_test.mjs
