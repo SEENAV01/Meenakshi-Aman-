@@ -55,7 +55,11 @@ class _ScheduleClassDialogState extends State<ScheduleClassDialog> {
       firstDate: DateTime(now.year, now.month, now.day),
       lastDate: now.add(const Duration(days: 365)),
     );
-    if (picked != null) setState(() => _date = picked);
+    if (picked != null) {
+      setState(() {
+        _date = picked;
+      });
+    }
   }
 
   Future<void> _pickTime() async {
@@ -63,7 +67,11 @@ class _ScheduleClassDialogState extends State<ScheduleClassDialog> {
       context: context,
       initialTime: _time ?? TimeOfDay.now(),
     );
-    if (picked != null) setState(() => _time = picked);
+    if (picked != null) {
+      setState(() {
+        _time = picked;
+      });
+    }
   }
 
   void _save() {
@@ -78,7 +86,9 @@ class _ScheduleClassDialogState extends State<ScheduleClassDialog> {
       error = 'Choose the date and time.';
     }
     if (error != null) {
-      setState(() => _error = error);
+      setState(() {
+        _error = error;
+      });
       return;
     }
     Navigator.pop(
@@ -123,7 +133,11 @@ class _ScheduleClassDialogState extends State<ScheduleClassDialog> {
                   ),
               ],
               onChanged: (value) {
-                if (value != null) setState(() => _batchId = value);
+                if (value != null) {
+                  setState(() {
+                    _batchId = value;
+                  });
+                }
               },
             ),
             TextField(

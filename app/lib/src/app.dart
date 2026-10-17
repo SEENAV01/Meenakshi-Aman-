@@ -127,7 +127,9 @@ class _SessionGateState extends State<_SessionGate> {
   Widget build(BuildContext context) {
     if (_isPasswordRecovery && _client.auth.currentSession != null) {
       return _PasswordUpdatePage(
-        onComplete: () => setState(() => _isPasswordRecovery = false),
+        onComplete: () => setState(() {
+          _isPasswordRecovery = false;
+        }),
       );
     }
 
@@ -145,7 +147,9 @@ class _SessionGateState extends State<_SessionGate> {
             message:
                 'Could not load your account role: ${_errorText(snapshot.error!)}',
             onRetry: () {
-              setState(() => _roleFuture = _backend.currentRole());
+              setState(() {
+                _roleFuture = _backend.currentRole();
+              });
             },
           );
         }
@@ -224,18 +228,28 @@ class _AuthPageState extends State<_AuthPage> {
         );
       }
     } on AuthException catch (error) {
-      setState(() => _message = error.message);
+      setState(() {
+        _message = error.message;
+      });
     } catch (error) {
-      setState(() => _message = _errorText(error));
+      setState(() {
+        _message = _errorText(error);
+      });
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
     }
   }
 
   Future<void> _sendRecovery() async {
     final email = _email.text.trim();
     if (email.isEmpty || !email.contains('@')) {
-      setState(() => _message = 'Enter your email address first.');
+      setState(() {
+        _message = 'Enter your email address first.';
+      });
       return;
     }
     setState(() {
@@ -247,16 +261,24 @@ class _AuthPageState extends State<_AuthPage> {
         email,
         redirectTo: _authRedirectUrl,
       );
-      setState(
-        () => _message =
-            'If this account exists, a password recovery link has been sent.',
-      );
+      setState(() {
+        _message =
+            'If this account exists, a password recovery link has been sent.';
+      });
     } on AuthException catch (error) {
-      setState(() => _message = error.message);
+      setState(() {
+        _message = error.message;
+      });
     } catch (error) {
-      setState(() => _message = _errorText(error));
+      setState(() {
+        _message = _errorText(error);
+      });
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
     }
   }
 
@@ -402,7 +424,9 @@ class _PasswordUpdatePageState extends State<_PasswordUpdatePage> {
 
   Future<void> _save() async {
     if (_password.text.length < 8) {
-      setState(() => _message = 'Use at least 8 characters.');
+      setState(() {
+        _message = 'Use at least 8 characters.';
+      });
       return;
     }
     setState(() {
@@ -415,11 +439,19 @@ class _PasswordUpdatePageState extends State<_PasswordUpdatePage> {
       );
       widget.onComplete();
     } on AuthException catch (error) {
-      setState(() => _message = error.message);
+      setState(() {
+        _message = error.message;
+      });
     } catch (error) {
-      setState(() => _message = _errorText(error));
+      setState(() {
+        _message = _errorText(error);
+      });
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
     }
   }
 
@@ -479,7 +511,7 @@ class _MainShellState extends State<_MainShell> {
     final isTeacher = widget.role == 'teacher_admin';
     final pages = isTeacher
         ? [
-            _TeacherCoursesPage(backend: widget.backend),
+            TeacherCoursesPage(backend: widget.backend),
             _TeacherRequestsPage(backend: widget.backend),
             _LiveClassesPage(backend: widget.backend, isTeacher: true),
             _ProfilePage(displayName: widget.displayName),
@@ -532,8 +564,9 @@ class _MainShellState extends State<_MainShell> {
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) =>
-            setState(() => _selectedIndex = index),
+        onDestinationSelected: (index) => setState(() {
+          _selectedIndex = index;
+        }),
         destinations: destinations,
       ),
     );
@@ -585,7 +618,9 @@ class _LiveClassesPageState extends State<_LiveClassesPage> {
   late Future<List<LiveClass>> _classes = widget.backend.loadLiveClasses();
 
   Future<void> _refresh() async {
-    setState(() => _classes = widget.backend.loadLiveClasses());
+    setState(() {
+      _classes = widget.backend.loadLiveClasses();
+    });
     await _classes;
   }
 
@@ -781,7 +816,9 @@ class _CatalogPageState extends State<_CatalogPage> {
   late Future<Catalog> _catalog = widget.backend.loadCatalog();
 
   Future<void> _refresh() async {
-    setState(() => _catalog = widget.backend.loadCatalog());
+    setState(() {
+      _catalog = widget.backend.loadCatalog();
+    });
     await _catalog;
   }
 
@@ -923,7 +960,9 @@ class _StudentLearningPageState extends State<_StudentLearningPage> {
       .loadApprovedBatches();
 
   Future<void> _refresh() async {
-    setState(() => _batches = widget.backend.loadApprovedBatches());
+    setState(() {
+      _batches = widget.backend.loadApprovedBatches();
+    });
     await _batches;
   }
 
@@ -984,21 +1023,23 @@ class _StudentLearningPageState extends State<_StudentLearningPage> {
   );
 }
 
-class _TeacherCoursesPage extends StatefulWidget {
-  const _TeacherCoursesPage({required this.backend});
+class TeacherCoursesPage extends StatefulWidget {
+  const TeacherCoursesPage({required this.backend, super.key});
 
   final GyanifyBackend backend;
 
   @override
-  State<_TeacherCoursesPage> createState() => _TeacherCoursesPageState();
+  State<TeacherCoursesPage> createState() => _TeacherCoursesPageState();
 }
 
-class _TeacherCoursesPageState extends State<_TeacherCoursesPage> {
+class _TeacherCoursesPageState extends State<TeacherCoursesPage> {
   late Future<List<LearningCourse>> _courses = widget.backend
       .loadTeacherCourses();
 
   Future<void> _refresh() async {
-    setState(() => _courses = widget.backend.loadTeacherCourses());
+    setState(() {
+      _courses = widget.backend.loadTeacherCourses();
+    });
     await _courses;
   }
 
@@ -1137,7 +1178,9 @@ class _TeacherRequestsPageState extends State<_TeacherRequestsPage> {
       .loadEnrollmentRequests();
 
   Future<void> _refresh() async {
-    setState(() => _requests = widget.backend.loadEnrollmentRequests());
+    setState(() {
+      _requests = widget.backend.loadEnrollmentRequests();
+    });
     await _requests;
   }
 
@@ -1272,7 +1315,9 @@ class _MaterialsPageState extends State<_MaterialsPage> {
   );
 
   Future<void> _refresh() async {
-    setState(() => _materials = widget.backend.loadMaterials(widget.batch.id));
+    setState(() {
+      _materials = widget.backend.loadMaterials(widget.batch.id);
+    });
     await _materials;
   }
 
