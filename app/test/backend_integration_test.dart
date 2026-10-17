@@ -91,7 +91,10 @@ void main() {
         expect(await student.currentRole(), 'student');
         var catalog = await student.loadCatalog();
         expect(catalog.courses.any((c) => c.id == courseId), isTrue);
+        final pendingBefore = await teacher.countPendingRequests();
         await student.requestEnrollment(batch.id);
+        // Badge count: one more pending request for this teacher.
+        expect(await teacher.countPendingRequests(), pendingBefore + 1);
         expect(await student.loadMaterials(batch.id), isEmpty);
         expect(
           (await student.loadLiveClasses()).where((l) => l.batchId == batch.id),
@@ -107,6 +110,11 @@ void main() {
         expect(request.studentEmail, email);
         expect(request.status, 'pending');
         await teacher.reviewEnrollment(request.id, 'approved');
+        expect(
+          await teacher.countPendingRequests(),
+          pendingBefore,
+          reason: 'badge goes back down after approving',
+        );
 
         // Student now has everything.
         catalog = await student.loadCatalog();

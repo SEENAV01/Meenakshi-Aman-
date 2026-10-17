@@ -9,7 +9,10 @@ class FakeBackend implements GyanifyBackend {
   String _id(String prefix) => '$prefix${++_ids}';
 
   @override
-  Future<List<LearningCourse>> loadTeacherCourses() async => List.of(courses);
+  Future<List<LearningCourse>> loadTeacherCourses() async {
+    _count('loadTeacherCourses');
+    return List.of(courses);
+  }
 
   @override
   Future<String> createCourse(String title, String description) async {
@@ -67,6 +70,7 @@ class FakeBackend implements GyanifyBackend {
 
   @override
   Future<List<MaterialFolder>> loadFolders(String batchId) async {
+    _count('loadFolders');
     _check();
     return _sorted(
       folders.where((f) => f.batchId == batchId).toList(),
@@ -191,6 +195,81 @@ class FakeBackend implements GyanifyBackend {
   @override
   Future<void> deleteMaterial(LearningMaterial material) async {
     materials.removeWhere((m) => m.id == material.id);
+  }
+
+  // ---- call counts (to prove a reload really happened) ----
+  final calls = <String, int>{};
+  void _count(String name) => calls[name] = (calls[name] ?? 0) + 1;
+  int count(String name) => calls[name] ?? 0;
+
+  // ---- enrollment requests ----
+  final requests = <EnrollmentRequest>[];
+
+  void addRequest(String student, {String status = 'pending'}) {
+    requests.add(
+      EnrollmentRequest(
+        id: _id('r'),
+        batchId: 'b1',
+        studentName: student,
+        studentEmail: '${student.toLowerCase()}@example.com',
+        courseTitle: 'Hindi',
+        batchTitle: 'Morning batch',
+        status: status,
+      ),
+    );
+  }
+
+  @override
+  Future<List<EnrollmentRequest>> loadEnrollmentRequests() async {
+    _count('loadEnrollmentRequests');
+    return List.of(requests.reversed);
+  }
+
+  @override
+  Future<int> countPendingRequests() async {
+    _count('countPendingRequests');
+    return requests.where((r) => r.status == 'pending').length;
+  }
+
+  @override
+  Future<void> reviewEnrollment(String id, String status) async {
+    final i = requests.indexWhere((r) => r.id == id);
+    final r = requests[i];
+    requests[i] = EnrollmentRequest(
+      id: r.id,
+      batchId: r.batchId,
+      studentName: r.studentName,
+      studentEmail: r.studentEmail,
+      courseTitle: r.courseTitle,
+      batchTitle: r.batchTitle,
+      status: status,
+    );
+  }
+
+  // ---- live classes, catalog, approved batches ----
+  final liveClasses = <LiveClass>[];
+  final approvedBatches = <LearningBatch>[];
+  final enrollmentStatuses = <String, String>{};
+
+  @override
+  Future<List<LiveClass>> loadLiveClasses() async {
+    _count('loadLiveClasses');
+    return List.of(liveClasses);
+  }
+
+  @override
+  Future<Catalog> loadCatalog() async {
+    _count('loadCatalog');
+    return Catalog(
+      courses: List.of(courses),
+      enrollmentStatuses: Map.of(enrollmentStatuses),
+    );
+  }
+
+  @override
+  Future<List<LearningBatch>> loadApprovedBatches() async {
+    _count('loadApprovedBatches');
+    return List.of(approvedBatches);
   }
 
   @override

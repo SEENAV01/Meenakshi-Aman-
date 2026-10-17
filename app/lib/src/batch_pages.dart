@@ -250,11 +250,26 @@ class _BatchPageState extends State<BatchPage> {
     widget.batch.id,
   );
 
+  /// Back from the background: show what changed meanwhile.
+  late final AppLifecycleListener _lifecycle;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _refresh);
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
   Future<void> _refresh() async {
     setState(() {
       _content = _loadBatch(widget.backend, widget.batch.id);
     });
-    await _content;
+    await _settle(_content);
   }
 
   Future<void> _run(Future<void> Function() action, {String? done}) async {
@@ -382,7 +397,16 @@ class _BatchPageState extends State<BatchPage> {
     builder: (context, snapshot) {
       final content = snapshot.data;
       return Scaffold(
-        appBar: AppBar(title: Text(widget.batch.title)),
+        appBar: AppBar(
+          title: Text(widget.batch.title),
+          actions: [
+            IconButton(
+              tooltip: 'Refresh',
+              onPressed: _refresh,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
         floatingActionButton: widget.isTeacher && content != null
             ? FloatingActionButton.extended(
                 onPressed: () => _add(content),
@@ -391,12 +415,17 @@ class _BatchPageState extends State<BatchPage> {
               )
             : null,
         body: snapshot.hasError
-            ? _LoadError(
-                message: _batchLoadError(
-                  snapshot.error!,
-                  isTeacher: widget.isTeacher,
-                ),
-                onRetry: _refresh,
+            ? _RefreshableList(
+                onRefresh: _refresh,
+                children: [
+                  _LoadError(
+                    message: _batchLoadError(
+                      snapshot.error!,
+                      isTeacher: widget.isTeacher,
+                    ),
+                    onRetry: _refresh,
+                  ),
+                ],
               )
             : content == null
             ? const Center(child: CircularProgressIndicator())
@@ -409,6 +438,7 @@ class _BatchPageState extends State<BatchPage> {
     final folders = content.folders;
     final loose = content.inFolder(null);
     return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
       children: [
         Text(
@@ -510,11 +540,26 @@ class _FolderPageState extends State<FolderPage> {
 
   String? get _folderId => widget.folder?.id;
 
+  /// Back from the background: show what changed meanwhile.
+  late final AppLifecycleListener _lifecycle;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _refresh);
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
   Future<void> _refresh() async {
     setState(() {
       _content = _loadBatch(widget.backend, widget.batch.id);
     });
-    await _content;
+    await _settle(_content);
   }
 
   Future<void> _run(Future<void> Function() action, {String? done}) async {
@@ -635,7 +680,16 @@ class _FolderPageState extends State<FolderPage> {
       builder: (context, snapshot) {
         final content = snapshot.data;
         return Scaffold(
-          appBar: AppBar(title: Text(title)),
+          appBar: AppBar(
+            title: Text(title),
+            actions: [
+              IconButton(
+                tooltip: 'Refresh',
+                onPressed: _refresh,
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
+          ),
           floatingActionButton: widget.isTeacher && content != null
               ? FloatingActionButton.extended(
                   onPressed: () => _add(content),
@@ -644,12 +698,17 @@ class _FolderPageState extends State<FolderPage> {
                 )
               : null,
           body: snapshot.hasError
-              ? _LoadError(
-                  message: _batchLoadError(
-                    snapshot.error!,
-                    isTeacher: widget.isTeacher,
-                  ),
-                  onRetry: _refresh,
+              ? _RefreshableList(
+                  onRefresh: _refresh,
+                  children: [
+                    _LoadError(
+                      message: _batchLoadError(
+                        snapshot.error!,
+                        isTeacher: widget.isTeacher,
+                      ),
+                      onRetry: _refresh,
+                    ),
+                  ],
                 )
               : content == null
               ? const Center(child: CircularProgressIndicator())
@@ -663,6 +722,7 @@ class _FolderPageState extends State<FolderPage> {
     final items = content.inFolder(_folderId);
     if (items.isEmpty) {
       return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
         children: [
           const SizedBox(height: 80),
           _EmptyState(
@@ -676,6 +736,7 @@ class _FolderPageState extends State<FolderPage> {
       );
     }
     return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
       children: [
         for (var i = 0; i < items.length; i++)

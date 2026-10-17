@@ -166,7 +166,7 @@ class _SessionGateState extends State<_SessionGate> {
         if (role != 'student' && role != 'teacher_admin') {
           return const _LoadError(message: 'This account has an unknown role.');
         }
-        return _MainShell(
+        return MainShell(
           backend: _backend,
           role: role,
           displayName:
@@ -492,11 +492,12 @@ class _PasswordUpdatePageState extends State<_PasswordUpdatePage> {
   );
 }
 
-class _MainShell extends StatefulWidget {
-  const _MainShell({
+class MainShell extends StatefulWidget {
+  const MainShell({
     required this.backend,
     required this.role,
     required this.displayName,
+    super.key,
   });
 
   final GyanifyBackend backend;
@@ -504,43 +505,121 @@ class _MainShell extends StatefulWidget {
   final String displayName;
 
   @override
-  State<_MainShell> createState() => _MainShellState();
+  State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<_MainShell> {
+class _MainShellState extends State<MainShell> {
   int _selectedIndex = 0;
+  int _pendingRequests = 0;
+
+  /// One per tab; firing it makes that tab reload its data.
+  final _signals = List.generate(4, (_) => ReloadSignal());
+  late final AppLifecycleListener _lifecycle;
+
+  bool get _isTeacher => widget.role == 'teacher_admin';
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _reloadCurrent);
+    _loadPendingCount();
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    for (final signal in _signals) {
+      signal.dispose();
+    }
+    super.dispose();
+  }
+
+  /// Back from the background, Refresh button: reload what is on screen.
+  void _reloadCurrent() {
+    _signals[_selectedIndex].fire();
+    _loadPendingCount();
+  }
+
+  void _select(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+    _reloadCurrent();
+  }
+
+  Future<void> _loadPendingCount() async {
+    if (!_isTeacher) return;
+    try {
+      _setPending(await widget.backend.countPendingRequests());
+    } catch (_) {
+      // The badge is a hint; the Requests tab shows real errors.
+    }
+  }
+
+  void _setPending(int count) {
+    if (mounted && count != _pendingRequests) {
+      setState(() {
+        _pendingRequests = count;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isTeacher = widget.role == 'teacher_admin';
+    final isTeacher = _isTeacher;
     final pages = isTeacher
         ? [
-            TeacherCoursesPage(backend: widget.backend),
-            _TeacherRequestsPage(backend: widget.backend),
-            _LiveClassesPage(backend: widget.backend, isTeacher: true),
+            TeacherCoursesPage(
+              backend: widget.backend,
+              reloadSignal: _signals[0],
+            ),
+            _TeacherRequestsPage(
+              backend: widget.backend,
+              reloadSignal: _signals[1],
+              onPendingCount: _setPending,
+            ),
+            _LiveClassesPage(
+              backend: widget.backend,
+              isTeacher: true,
+              reloadSignal: _signals[2],
+            ),
             _ProfilePage(displayName: widget.displayName),
           ]
         : [
-            _CatalogPage(backend: widget.backend),
-            _StudentLearningPage(backend: widget.backend),
-            _LiveClassesPage(backend: widget.backend, isTeacher: false),
+            _CatalogPage(backend: widget.backend, reloadSignal: _signals[0]),
+            _StudentLearningPage(
+              backend: widget.backend,
+              reloadSignal: _signals[1],
+            ),
+            _LiveClassesPage(
+              backend: widget.backend,
+              isTeacher: false,
+              reloadSignal: _signals[2],
+            ),
             _ProfilePage(displayName: widget.displayName),
           ];
     final destinations = isTeacher
-        ? const [
-            NavigationDestination(
+        ? [
+            const NavigationDestination(
               icon: Icon(Icons.school_outlined),
               label: 'Courses',
             ),
             NavigationDestination(
-              icon: Icon(Icons.how_to_reg_outlined),
+              icon: Badge.count(
+                count: _pendingRequests,
+                isLabelVisible: _pendingRequests > 0,
+                child: const Icon(Icons.how_to_reg_outlined),
+              ),
               label: 'Requests',
+              tooltip: _pendingRequests > 0
+                  ? 'Requests ($_pendingRequests pending)'
+                  : 'Requests',
             ),
-            NavigationDestination(
+            const NavigationDestination(
               icon: Icon(Icons.video_camera_front_outlined),
               label: 'Live Classes',
             ),
-            NavigationDestination(
+            const NavigationDestination(
               icon: Icon(Icons.person_outline),
               label: 'Profile',
             ),
@@ -564,13 +643,21 @@ class _MainShellState extends State<_MainShell> {
             ),
           ];
     return Scaffold(
-      appBar: AppBar(title: AppHeaderTitle(isTeacher: isTeacher)),
+      appBar: AppBar(
+        title: AppHeaderTitle(isTeacher: isTeacher),
+        actions: [
+          if (_selectedIndex != 3)
+            IconButton(
+              tooltip: 'Refresh',
+              onPressed: _reloadCurrent,
+              icon: const Icon(Icons.refresh),
+            ),
+        ],
+      ),
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) => setState(() {
-          _selectedIndex = index;
-        }),
+        onDestinationSelected: _select,
         destinations: destinations,
       ),
     );
@@ -609,23 +696,33 @@ class AppHeaderTitle extends StatelessWidget {
 }
 
 class _LiveClassesPage extends StatefulWidget {
-  const _LiveClassesPage({required this.backend, required this.isTeacher});
+  const _LiveClassesPage({
+    required this.backend,
+    required this.isTeacher,
+    this.reloadSignal,
+  });
 
   final GyanifyBackend backend;
+  final ReloadSignal? reloadSignal;
   final bool isTeacher;
 
   @override
   State<_LiveClassesPage> createState() => _LiveClassesPageState();
 }
 
-class _LiveClassesPageState extends State<_LiveClassesPage> {
+class _LiveClassesPageState extends State<_LiveClassesPage>
+    with _ReloadsOnSignal<_LiveClassesPage> {
+  @override
+  ReloadSignal? get reloadSignal => widget.reloadSignal;
+
   late Future<List<LiveClass>> _classes = widget.backend.loadLiveClasses();
 
+  @override
   Future<void> _refresh() async {
     setState(() {
       _classes = widget.backend.loadLiveClasses();
     });
-    await _classes;
+    await _settle(_classes);
   }
 
   Future<void> _schedule() async {
@@ -684,10 +781,15 @@ class _LiveClassesPageState extends State<_LiveClassesPage> {
       future: _classes,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return _LoadError(
-            message:
-                'Could not load live classes: ${_errorText(snapshot.error!)}',
-            onRetry: _refresh,
+          return _RefreshableList(
+            onRefresh: _refresh,
+            children: [
+              _LoadError(
+                message:
+                    'Could not load live classes: ${_errorText(snapshot.error!)}',
+                onRetry: _refresh,
+              ),
+            ],
           );
         }
         if (!snapshot.hasData) {
@@ -697,6 +799,7 @@ class _LiveClassesPageState extends State<_LiveClassesPage> {
         return RefreshIndicator(
           onRefresh: _refresh,
           child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
             children: [
               Text(
@@ -783,6 +886,7 @@ class _ProfilePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListView(
+    physics: const AlwaysScrollableScrollPhysics(),
     padding: const EdgeInsets.all(20),
     children: [
       Text(
@@ -808,22 +912,28 @@ class _ProfilePage extends StatelessWidget {
 }
 
 class _CatalogPage extends StatefulWidget {
-  const _CatalogPage({required this.backend});
+  const _CatalogPage({required this.backend, this.reloadSignal});
 
   final GyanifyBackend backend;
+  final ReloadSignal? reloadSignal;
 
   @override
   State<_CatalogPage> createState() => _CatalogPageState();
 }
 
-class _CatalogPageState extends State<_CatalogPage> {
+class _CatalogPageState extends State<_CatalogPage>
+    with _ReloadsOnSignal<_CatalogPage> {
+  @override
+  ReloadSignal? get reloadSignal => widget.reloadSignal;
+
   late Future<Catalog> _catalog = widget.backend.loadCatalog();
 
+  @override
   Future<void> _refresh() async {
     setState(() {
       _catalog = widget.backend.loadCatalog();
     });
-    await _catalog;
+    await _settle(_catalog);
   }
 
   Future<void> _request(LearningBatch batch) async {
@@ -841,9 +951,14 @@ class _CatalogPageState extends State<_CatalogPage> {
     future: _catalog,
     builder: (context, snapshot) {
       if (snapshot.hasError) {
-        return _LoadError(
-          message: 'Could not load courses: ${_errorText(snapshot.error!)}',
-          onRetry: _refresh,
+        return _RefreshableList(
+          onRefresh: _refresh,
+          children: [
+            _LoadError(
+              message: 'Could not load courses: ${_errorText(snapshot.error!)}',
+              onRetry: _refresh,
+            ),
+          ],
         );
       }
       if (!snapshot.hasData) {
@@ -851,15 +966,21 @@ class _CatalogPageState extends State<_CatalogPage> {
       }
       final catalog = snapshot.data!;
       if (catalog.courses.isEmpty) {
-        return const _EmptyState(
-          icon: Icons.school_outlined,
-          title: 'No courses yet',
-          detail: 'Available courses will appear here.',
+        return _RefreshableList(
+          onRefresh: _refresh,
+          children: [
+            const _EmptyState(
+              icon: Icons.school_outlined,
+              title: 'No courses yet',
+              detail: 'Available courses will appear here.',
+            ),
+          ],
         );
       }
       return RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
             Text(
@@ -951,23 +1072,29 @@ class _BatchCatalogTile extends StatelessWidget {
 }
 
 class _StudentLearningPage extends StatefulWidget {
-  const _StudentLearningPage({required this.backend});
+  const _StudentLearningPage({required this.backend, this.reloadSignal});
 
   final GyanifyBackend backend;
+  final ReloadSignal? reloadSignal;
 
   @override
   State<_StudentLearningPage> createState() => _StudentLearningPageState();
 }
 
-class _StudentLearningPageState extends State<_StudentLearningPage> {
+class _StudentLearningPageState extends State<_StudentLearningPage>
+    with _ReloadsOnSignal<_StudentLearningPage> {
+  @override
+  ReloadSignal? get reloadSignal => widget.reloadSignal;
+
   late Future<List<LearningBatch>> _batches = widget.backend
       .loadApprovedBatches();
 
+  @override
   Future<void> _refresh() async {
     setState(() {
       _batches = widget.backend.loadApprovedBatches();
     });
-    await _batches;
+    await _settle(_batches);
   }
 
   @override
@@ -975,11 +1102,16 @@ class _StudentLearningPageState extends State<_StudentLearningPage> {
     future: _batches,
     builder: (context, snapshot) {
       if (snapshot.hasError) {
-        return _LoadError(
-          message:
-              'Could not load your batches: '
-              '${_errorText(snapshot.error!)}',
-          onRetry: _refresh,
+        return _RefreshableList(
+          onRefresh: _refresh,
+          children: [
+            _LoadError(
+              message:
+                  'Could not load your batches: '
+                  '${_errorText(snapshot.error!)}',
+              onRetry: _refresh,
+            ),
+          ],
         );
       }
       if (!snapshot.hasData) {
@@ -987,15 +1119,21 @@ class _StudentLearningPageState extends State<_StudentLearningPage> {
       }
       final batches = snapshot.data!;
       if (batches.isEmpty) {
-        return const _EmptyState(
-          icon: Icons.menu_book_outlined,
-          title: 'Nothing to learn yet',
-          detail: 'Request to join a batch. Approved batches appear here.',
+        return _RefreshableList(
+          onRefresh: _refresh,
+          children: [
+            const _EmptyState(
+              icon: Icons.menu_book_outlined,
+              title: 'Nothing to learn yet',
+              detail: 'Request to join a batch. Approved batches appear here.',
+            ),
+          ],
         );
       }
       return RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
             Text(
@@ -1028,23 +1166,33 @@ class _StudentLearningPageState extends State<_StudentLearningPage> {
 }
 
 class TeacherCoursesPage extends StatefulWidget {
-  const TeacherCoursesPage({required this.backend, super.key});
+  const TeacherCoursesPage({
+    required this.backend,
+    this.reloadSignal,
+    super.key,
+  });
 
   final GyanifyBackend backend;
+  final ReloadSignal? reloadSignal;
 
   @override
   State<TeacherCoursesPage> createState() => _TeacherCoursesPageState();
 }
 
-class _TeacherCoursesPageState extends State<TeacherCoursesPage> {
+class _TeacherCoursesPageState extends State<TeacherCoursesPage>
+    with _ReloadsOnSignal<TeacherCoursesPage> {
+  @override
+  ReloadSignal? get reloadSignal => widget.reloadSignal;
+
   late Future<List<LearningCourse>> _courses = widget.backend
       .loadTeacherCourses();
 
+  @override
   Future<void> _refresh() async {
     setState(() {
       _courses = widget.backend.loadTeacherCourses();
     });
-    await _courses;
+    await _settle(_courses);
   }
 
   Future<void> _createCourse() async {
@@ -1082,9 +1230,14 @@ class _TeacherCoursesPageState extends State<TeacherCoursesPage> {
     future: _courses,
     builder: (context, snapshot) {
       if (snapshot.hasError) {
-        return _LoadError(
-          message: 'Could not load courses: ${_errorText(snapshot.error!)}',
-          onRetry: _refresh,
+        return _RefreshableList(
+          onRefresh: _refresh,
+          children: [
+            _LoadError(
+              message: 'Could not load courses: ${_errorText(snapshot.error!)}',
+              onRetry: _refresh,
+            ),
+          ],
         );
       }
       if (!snapshot.hasData) {
@@ -1094,6 +1247,7 @@ class _TeacherCoursesPageState extends State<TeacherCoursesPage> {
       return RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
             Row(
@@ -1169,23 +1323,43 @@ class _TeacherCoursesPageState extends State<TeacherCoursesPage> {
 }
 
 class _TeacherRequestsPage extends StatefulWidget {
-  const _TeacherRequestsPage({required this.backend});
+  const _TeacherRequestsPage({
+    required this.backend,
+    this.reloadSignal,
+    this.onPendingCount,
+  });
 
   final GyanifyBackend backend;
+  final ReloadSignal? reloadSignal;
+
+  /// Tells MainShell how many requests are pending (for the badge).
+  final ValueChanged<int>? onPendingCount;
 
   @override
   State<_TeacherRequestsPage> createState() => _TeacherRequestsPageState();
 }
 
-class _TeacherRequestsPageState extends State<_TeacherRequestsPage> {
-  late Future<List<EnrollmentRequest>> _requests = widget.backend
-      .loadEnrollmentRequests();
+class _TeacherRequestsPageState extends State<_TeacherRequestsPage>
+    with _ReloadsOnSignal<_TeacherRequestsPage> {
+  @override
+  ReloadSignal? get reloadSignal => widget.reloadSignal;
 
+  late Future<List<EnrollmentRequest>> _requests = _load();
+
+  Future<List<EnrollmentRequest>> _load() async {
+    final requests = await widget.backend.loadEnrollmentRequests();
+    widget.onPendingCount?.call(
+      requests.where((r) => r.status == 'pending').length,
+    );
+    return requests;
+  }
+
+  @override
   Future<void> _refresh() async {
     setState(() {
-      _requests = widget.backend.loadEnrollmentRequests();
+      _requests = _load();
     });
-    await _requests;
+    await _settle(_requests);
   }
 
   Future<void> _review(EnrollmentRequest request, String status) async {
@@ -1209,10 +1383,15 @@ class _TeacherRequestsPageState extends State<_TeacherRequestsPage> {
     future: _requests,
     builder: (context, snapshot) {
       if (snapshot.hasError) {
-        return _LoadError(
-          message:
-              'Could not load enrollment requests: ${_errorText(snapshot.error!)}',
-          onRetry: _refresh,
+        return _RefreshableList(
+          onRefresh: _refresh,
+          children: [
+            _LoadError(
+              message:
+                  'Could not load enrollment requests: ${_errorText(snapshot.error!)}',
+              onRetry: _refresh,
+            ),
+          ],
         );
       }
       if (!snapshot.hasData) {
@@ -1220,15 +1399,21 @@ class _TeacherRequestsPageState extends State<_TeacherRequestsPage> {
       }
       final requests = snapshot.data!;
       if (requests.isEmpty) {
-        return const _EmptyState(
-          icon: Icons.how_to_reg_outlined,
-          title: 'No enrollment requests',
-          detail: 'New student requests for your batches will appear here.',
+        return _RefreshableList(
+          onRefresh: _refresh,
+          children: [
+            const _EmptyState(
+              icon: Icons.how_to_reg_outlined,
+              title: 'No enrollment requests',
+              detail: 'New student requests for your batches will appear here.',
+            ),
+          ],
         );
       }
       return RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
             Text(
@@ -1329,6 +1514,7 @@ class _VideoPageState extends State<_VideoPage> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text(widget.title)),
     body: ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
       children: [
         YoutubePlayer(controller: _controller),
         Padding(
@@ -1383,6 +1569,57 @@ String _formatDateTime(BuildContext context, DateTime value) {
   final localizations = MaterialLocalizations.of(context);
   return '${localizations.formatFullDate(value)} · '
       '${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(value))}';
+}
+
+/// Pull-to-refresh list that also works when it only holds an empty or
+/// error message (AlwaysScrollableScrollPhysics).
+class _RefreshableList extends StatelessWidget {
+  const _RefreshableList({required this.onRefresh, required this.children});
+
+  final Future<void> Function() onRefresh;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => RefreshIndicator(
+    onRefresh: onRefresh,
+    child: ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      children: children,
+    ),
+  );
+}
+
+/// Waits for a load without throwing: its FutureBuilder shows the error.
+Future<void> _settle(Future<Object?> load) =>
+    load.then<void>((_) {}, onError: (Object _) {});
+
+/// MainShell fires this to make a tab reload (tab switch, app resume,
+/// Refresh button).
+class ReloadSignal extends ChangeNotifier {
+  void fire() => notifyListeners();
+}
+
+/// Reloads a tab whenever its [ReloadSignal] fires.
+mixin _ReloadsOnSignal<T extends StatefulWidget> on State<T> {
+  ReloadSignal? get reloadSignal;
+  Future<void> _refresh();
+
+  void _onSignal() {
+    if (mounted) _refresh();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    reloadSignal?.addListener(_onSignal);
+  }
+
+  @override
+  void dispose() {
+    reloadSignal?.removeListener(_onSignal);
+    super.dispose();
+  }
 }
 
 class _LoadError extends StatelessWidget {

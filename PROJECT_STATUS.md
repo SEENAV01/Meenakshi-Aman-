@@ -125,6 +125,22 @@ Not verified:
   deliberately opened folder holes it reported 3 failures.
 - Not verified: on a real phone; on the live Supabase (folders SQL not run there yet).
 
+### 2026-10-18 — lists always refresh, Requests badge
+
+- Bug: the teacher's Requests tab only showed a new student request after restarting the app
+  (tabs live in an IndexedStack and loaded once; empty lists were not pull-to-refresh).
+- Now every list (teacher: courses, requests, live classes, batch folders, folder items;
+  student: catalog, my learning, live classes, folders, items) can be pulled down even when
+  empty or showing an error, and has a Refresh button. A tab reloads when you switch to it and
+  when the app comes back from the background. The Requests tab shows a badge with the number
+  of pending requests (updated on start, tab switch, resume, refresh and after approve/reject).
+- Verified locally: `test/tabs_refresh_test.dart` — 12 tests failed on the old code
+  ("Asha" not found after switching tabs; nothing to pull on the empty list) and pass now.
+  `flutter analyze` no issues; `flutter test` 58 passed (2 integration tests skipped without
+  env); with local Supabase both integration tests pass (badge count +1 after a request,
+  back after approval); `security_test.mjs` 54 passed.
+- Not verified: on a real phone; on the live Supabase.
+
 ## Owner setup required
 
 See the numbered list in the final report of the 2026-10-17 session (also repeated in

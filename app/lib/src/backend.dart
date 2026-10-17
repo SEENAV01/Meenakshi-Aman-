@@ -264,6 +264,15 @@ class GyanifyBackend {
         .toList(growable: false);
   }
 
+  /// Pending requests for the teacher's own batches (row level security).
+  Future<int> countPendingRequests() async {
+    final rows = await client
+        .from('enrollments')
+        .select('id')
+        .eq('status', 'pending');
+    return rows.length;
+  }
+
   Future<List<LearningBatch>> loadApprovedBatches() async {
     final user = client.auth.currentUser;
     if (user == null) throw const AuthException('Please sign in again.');
