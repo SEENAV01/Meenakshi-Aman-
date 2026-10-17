@@ -27,7 +27,9 @@ Kabhi bhi `service_role` / secret key app, repo ya chat mein mat daaliye. Sirf *
 Repo kholiye → **Settings** → left mein **Secrets and variables** → **Actions** →
 **New repository secret**. Har secret ke liye: *Name* likhiye, *Secret* mein value paste, *Add secret*.
 
-6. `SUPABASE_URL` = Project URL
+6. `SUPABASE_URL` = Project URL (jaise `https://abcd1234.supabase.co`, aage-peeche space nahi).
+   Naam bilkul yahi hona chahiye — capital letters aur underscore ke saath. Ye URL secret nahi hai,
+   isliye *Variables* tab mein bhi isi naam se rakh sakte hain; workflow dono jagah dekhta hai.
 7. `SUPABASE_PUBLISHABLE_KEY` = `sb_publishable_...` wali key
 
 ## C. Signing key (ek hi baar — isse students bina uninstall kiye update kar paayenge)

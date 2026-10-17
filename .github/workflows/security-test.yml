@@ -89,7 +89,7 @@ jobs:
       - name: Check secrets
         id: secrets
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || vars.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
           SECTEST_TEACHER_EMAIL: ${{ secrets.SECTEST_TEACHER_EMAIL }}
           SECTEST_TEACHER_PASSWORD: ${{ secrets.SECTEST_TEACHER_PASSWORD }}
@@ -108,7 +108,7 @@ jobs:
       - name: Security test (live project)
         if: steps.secrets.outputs.ready == 'yes'
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || vars.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
           SECTEST_TEACHER_EMAIL: ${{ secrets.SECTEST_TEACHER_EMAIL }}
           SECTEST_TEACHER_PASSWORD: ${{ secrets.SECTEST_TEACHER_PASSWORD }}

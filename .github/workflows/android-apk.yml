@@ -93,27 +93,47 @@ jobs:
 
       - name: Check app config
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || vars.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
-          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_PUBLISHABLE_KEY" ]; then
+          # Same rules as app/lib/main.dart, so "Connected" in the release notes is honest.
+          URL="$(printf '%s' "$SUPABASE_URL" | tr -d '[:space:]')"
+          KEY="$(printf '%s' "$SUPABASE_PUBLISHABLE_KEY" | tr -d '[:space:]')"
+          case "$KEY" in
+            sb_secret_*|*service_role*)
+              echo "::error title=Wrong key::SUPABASE_PUBLISHABLE_KEY holds a SECRET key. Replace it with the sb_publishable_... key and rotate the secret key in Supabase."
+              exit 1 ;;
+          esac
+          problems=""
+          [ -z "$URL" ] && problems="$problems SUPABASE_URL is empty (add it as a secret or variable with exactly this name);"
+          [ -z "$KEY" ] && problems="$problems SUPABASE_PUBLISHABLE_KEY is empty;"
+          if [ -n "$URL" ]; then
+            case "$URL" in
+              https://?*) ;;
+              *) problems="$problems SUPABASE_URL must start with https:// ;" ;;
+            esac
+            case "$URL" in *example*) problems="$problems SUPABASE_URL still contains 'example';" ;; esac
+          fi
+          case "$KEY" in *example*) problems="$problems SUPABASE_PUBLISHABLE_KEY still contains 'example';" ;; esac
+          if [ -z "$problems" ]; then
             echo "HAS_BACKEND=yes" >> "$GITHUB_ENV"
+            echo "Supabase config found for host: $(printf '%s' "$URL" | sed -E 's#^https://([^/]+).*#\1#')"
           else
             echo "HAS_BACKEND=no" >> "$GITHUB_ENV"
-            echo "::warning title=No Supabase config::SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY secret is missing. The app will only show a 'Backend configuration is missing' screen."
+            echo "::warning title=No Supabase config::$problems The app will only show a 'Backend configuration is missing' screen."
           fi
 
       - name: Build APK
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || vars.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
           # Debug test builds skip x86 emulator code to stay small enough for WhatsApp.
           EXTRA=""
           if [ "$BUILD_KIND" = debug ]; then EXTRA="--target-platform=android-arm,android-arm64"; fi
           flutter build apk "--$BUILD_KIND" $EXTRA \
-            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
-            --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \
+            --dart-define=SUPABASE_URL="$(printf '%s' "$SUPABASE_URL" | tr -d '[:space:]')" \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$(printf '%s' "$SUPABASE_PUBLISHABLE_KEY" | tr -d '[:space:]')" \
             --dart-define=SUPABASE_AUTH_REDIRECT_URL=gyanify://login-callback/ \
             --build-name="1.0.$GITHUB_RUN_NUMBER" \
             --build-number="$GITHUB_RUN_NUMBER"
