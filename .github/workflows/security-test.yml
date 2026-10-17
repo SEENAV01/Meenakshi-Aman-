@@ -1,0 +1,115 @@
+name: Supabase security test
+
+# Two jobs:
+#  local - starts a throwaway Supabase inside the runner, applies every migration
+#          in supabase/migrations, then runs the security test and the app's
+#          backend integration test. Needs no secrets.
+#  live  - runs the security test against the real project. Needs the secrets
+#          SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SECTEST_TEACHER_EMAIL and
+#          SECTEST_TEACHER_PASSWORD. Skipped (with a warning) until they exist.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - 'app/lib/src/backend.dart'
+      - 'app/test/backend_integration_test.dart'
+      - '.github/workflows/security-test.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Start a local Supabase with this repo's migrations
+        run: |
+          mkdir -p "$RUNNER_TEMP/sb" && cd "$RUNNER_TEMP/sb"
+          npx --yes supabase@2.121.0 init --yes
+          rm -rf supabase/migrations
+          cp -r "$GITHUB_WORKSPACE/supabase/migrations" supabase/migrations
+          sed -i 's/^enable_confirmations = .*/enable_confirmations = false/' supabase/config.toml
+          npx --yes supabase@2.121.0 start -x studio,imgproxy,inbucket,mailpit,realtime,edge-runtime,logflare,vector,supavisor,postgres-meta
+          npx --yes supabase@2.121.0 status -o env | grep -E '^(API_URL|PUBLISHABLE_KEY)=' | sed 's/"//g' > "$RUNNER_TEMP/sb.env"
+          psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c "select version from supabase_migrations.schema_migrations order by version"
+
+      - name: Create a local test teacher
+        run: |
+          set -a; . "$RUNNER_TEMP/sb.env"; set +a
+          curl -sS --fail -X POST "$API_URL/auth/v1/signup" -H "apikey: $PUBLISHABLE_KEY" \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"teacher@example.com","password":"local-test-password-123"}' > /dev/null
+          psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \
+            "update public.profiles p set role = 'teacher_admin' from auth.users u where u.id = p.id and u.email = 'teacher@example.com'"
+
+      - name: Security test (local)
+        run: |
+          set -a; . "$RUNNER_TEMP/sb.env"; set +a
+          SUPABASE_URL="$API_URL" SUPABASE_PUBLISHABLE_KEY="$PUBLISHABLE_KEY" \
+          SECTEST_TEACHER_EMAIL=teacher@example.com SECTEST_TEACHER_PASSWORD=local-test-password-123 \
+            node supabase/tests/security_test.mjs
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+
+      - name: App backend integration test (local)
+        working-directory: app
+        run: |
+          set -a; . "$RUNNER_TEMP/sb.env"; set +a
+          flutter pub get
+          GYANIFY_IT_URL="$API_URL" GYANIFY_IT_KEY="$PUBLISHABLE_KEY" \
+          GYANIFY_IT_TEACHER_EMAIL=teacher@example.com GYANIFY_IT_TEACHER_PASSWORD=local-test-password-123 \
+            flutter test test/backend_integration_test.dart
+
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check secrets
+        id: secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          SECTEST_TEACHER_EMAIL: ${{ secrets.SECTEST_TEACHER_EMAIL }}
+          SECTEST_TEACHER_PASSWORD: ${{ secrets.SECTEST_TEACHER_PASSWORD }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_PUBLISHABLE_KEY" ] && [ -n "$SECTEST_TEACHER_EMAIL" ] && [ -n "$SECTEST_TEACHER_PASSWORD" ]; then
+            echo "ready=yes" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "::error::Live security test needs SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SECTEST_TEACHER_EMAIL and SECTEST_TEACHER_PASSWORD secrets."
+            exit 1
+          else
+            echo "ready=no" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Live security test SKIPPED::Secrets are not set yet, so the live Supabase project was NOT tested."
+            echo "## Live security test SKIPPED (secrets not set)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Security test (live project)
+        if: steps.secrets.outputs.ready == 'yes'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          SECTEST_TEACHER_EMAIL: ${{ secrets.SECTEST_TEACHER_EMAIL }}
+          SECTEST_TEACHER_PASSWORD: ${{ secrets.SECTEST_TEACHER_PASSWORD }}
+        run: node supabase/tests/security_test.mjs

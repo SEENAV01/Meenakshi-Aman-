@@ -1,0 +1,138 @@
+name: Android APK
+
+# Builds the APK on every push to main and publishes it on the GitHub Release
+# named "latest": https://github.com/<owner>/<repo>/releases/tag/latest
+#
+# Secrets (Settings > Secrets and variables > Actions):
+#   SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY       app config (via --dart-define)
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+#   ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD      fixed release signing key
+# Without the four signing secrets a DEBUG test build is published instead.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+
+      - name: Install packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Unit and widget tests
+        run: flutter test
+
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/gyanify-release.jks
+            {
+              printf 'storePassword=%s\n' "$KEYSTORE_PASSWORD"
+              printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+              printf 'keyAlias=%s\n' "$KEY_ALIAS"
+              printf 'storeFile=gyanify-release.jks\n'
+            } > android/key.properties
+            echo "BUILD_KIND=release" >> "$GITHUB_ENV"
+            echo "Release signing key found."
+          else
+            echo "BUILD_KIND=debug" >> "$GITHUB_ENV"
+            echo "::warning title=Test build::Signing secrets are missing, so this is a DEBUG test build. Students will have to uninstall it before installing the real release."
+          fi
+
+      - name: Check app config
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_PUBLISHABLE_KEY" ]; then
+            echo "HAS_BACKEND=yes" >> "$GITHUB_ENV"
+          else
+            echo "HAS_BACKEND=no" >> "$GITHUB_ENV"
+            echo "::warning title=No Supabase config::SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY secret is missing. The app will only show a 'Backend configuration is missing' screen."
+          fi
+
+      - name: Build APK
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          flutter build apk "--$BUILD_KIND" \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \
+            --dart-define=SUPABASE_AUTH_REDIRECT_URL=gyanify://login-callback/ \
+            --build-name="1.0.$GITHUB_RUN_NUMBER" \
+            --build-number="$GITHUB_RUN_NUMBER"
+          cp "build/app/outputs/flutter-apk/app-$BUILD_KIND.apk" "$RUNNER_TEMP/gyanify.apk"
+          rm -f android/key.properties android/app/gyanify-release.jks
+
+      - name: Verify APK signature
+        run: |
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
+          "$APKSIGNER" verify --print-certs "$RUNNER_TEMP/gyanify.apk" | tee "$RUNNER_TEMP/signature.txt"
+          cd "$RUNNER_TEMP" && sha256sum gyanify.apk | tee gyanify.apk.sha256
+          ls -l gyanify.apk
+
+      - name: Publish to the "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CERT="$(grep -m1 'SHA-256 digest' "$RUNNER_TEMP/signature.txt" | sed 's/.*: //')"
+          if [ "$BUILD_KIND" = release ]; then
+            KIND="Release build (fixed signing key, students can update without uninstalling)."
+          else
+            KIND="TEST BUILD (debug). Signing secrets are not set yet. Each test build has a different key, so uninstall the old one before installing."
+          fi
+          if [ "$HAS_BACKEND" = yes ]; then
+            BACKEND="Connected to Supabase."
+          else
+            BACKEND="NOT connected to Supabase (secrets missing). The app only shows a setup notice."
+          fi
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          **Gyanify 1.0.$GITHUB_RUN_NUMBER** from commit \`${GITHUB_SHA::7}\`
+
+          - $KIND
+          - $BACKEND
+          - Signing certificate SHA-256: \`$CERT\`
+          - APK SHA-256: \`$(cut -d' ' -f1 "$RUNNER_TEMP/gyanify.apk.sha256")\`
+
+          Download **gyanify.apk** below, then send that file on WhatsApp.
+          EOF
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest "$RUNNER_TEMP/gyanify.apk" "$RUNNER_TEMP/gyanify.apk.sha256" \
+            --title latest --target "$GITHUB_SHA" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          echo "## APK published" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"

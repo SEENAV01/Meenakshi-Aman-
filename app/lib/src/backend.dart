@@ -35,6 +35,7 @@ class EnrollmentRequest {
     required this.id,
     required this.batchId,
     required this.studentName,
+    required this.studentEmail,
     required this.courseTitle,
     required this.batchTitle,
     required this.status,
@@ -43,6 +44,7 @@ class EnrollmentRequest {
   final String id;
   final String batchId;
   final String studentName;
+  final String studentEmail;
   final String courseTitle;
   final String batchTitle;
   final String status;
@@ -51,15 +53,44 @@ class EnrollmentRequest {
 class LearningMaterial {
   const LearningMaterial({
     required this.id,
+    required this.kind,
     required this.title,
     required this.description,
-    required this.storagePath,
+    this.storagePath,
+    this.youtubeUrl,
   });
 
   final String id;
+  final String kind;
   final String title;
   final String description;
-  final String storagePath;
+  final String? storagePath;
+  final String? youtubeUrl;
+
+  bool get isPdf => kind == 'pdf';
+  bool get isVideo => kind == 'youtube_video';
+}
+
+class LiveClass {
+  const LiveClass({
+    required this.id,
+    required this.batchId,
+    required this.title,
+    required this.description,
+    required this.startsAt,
+    required this.meetingUrl,
+    required this.batchTitle,
+    required this.courseTitle,
+  });
+
+  final String id;
+  final String batchId;
+  final String title;
+  final String description;
+  final DateTime startsAt;
+  final String meetingUrl;
+  final String batchTitle;
+  final String courseTitle;
 }
 
 class Catalog {
@@ -158,7 +189,7 @@ class GyanifyBackend {
     final rows = await client
         .from('enrollments')
         .select(
-          'id,batch_id,status,profiles(display_name),batches(title,courses(title))',
+          'id,batch_id,status,profiles(display_name,email),batches(title,courses(title))',
         )
         .order('requested_at', ascending: false);
     return rows
@@ -172,6 +203,7 @@ class GyanifyBackend {
             studentName: (profile['display_name'] as String).trim().isEmpty
                 ? 'Student'
                 : profile['display_name'] as String,
+            studentEmail: profile['email'] as String? ?? '',
             courseTitle: course['title'] as String,
             batchTitle: batch['title'] as String,
             status: row['status'] as String,
@@ -205,18 +237,19 @@ class GyanifyBackend {
   Future<List<LearningMaterial>> loadMaterials(String batchId) async {
     final rows = await client
         .from('learning_materials')
-        .select('id,title,description,storage_path')
+        .select('id,kind,title,description,storage_path,youtube_url')
         .eq('batch_id', batchId)
-        .eq('kind', 'pdf')
         .order('display_order')
         .order('created_at', ascending: false);
     return rows
         .map(
           (row) => LearningMaterial(
             id: row['id'] as String,
+            kind: row['kind'] as String,
             title: row['title'] as String,
             description: row['description'] as String,
-            storagePath: row['storage_path'] as String,
+            storagePath: row['storage_path'] as String?,
+            youtubeUrl: row['youtube_url'] as String?,
           ),
         )
         .toList(growable: false);
@@ -312,9 +345,108 @@ class GyanifyBackend {
     }
   }
 
+  /// Saves a YouTube link. The video itself stays on YouTube.
+  Future<void> addVideo({
+    required String batchId,
+    required String title,
+    required String description,
+    required String youtubeUrl,
+  }) async {
+    final user = client.auth.currentUser;
+    if (user == null) throw const AuthException('Please sign in again.');
+    await client.from('learning_materials').insert({
+      'batch_id': batchId,
+      'created_by': user.id,
+      'kind': 'youtube_video',
+      'title': title.trim(),
+      'description': description.trim(),
+      'youtube_url': youtubeUrl,
+    });
+  }
+
+  Future<void> deleteMaterial(LearningMaterial material) async {
+    await client.from('learning_materials').delete().eq('id', material.id);
+    final path = material.storagePath;
+    if (path != null) {
+      await client.storage.from('learning-materials').remove([path]);
+    }
+  }
+
   Future<String> createPdfLink(String storagePath) {
     return client.storage
         .from('learning-materials')
         .createSignedUrl(storagePath, 300);
+  }
+
+  /// A short-lived link that makes the browser save the PDF to Downloads.
+  Future<String> createPdfDownloadLink(String storagePath, String title) {
+    final safeName = title.replaceAll(RegExp(r'[^A-Za-z0-9 ._-]'), '_').trim();
+    return client.storage
+        .from('learning-materials')
+        .createSignedUrl(
+          storagePath,
+          300,
+          download: DownloadBehavior.named(
+            '${safeName.isEmpty ? 'notes' : safeName}.pdf',
+          ),
+        );
+  }
+
+  /// Upcoming and recent live classes. Row level security returns only the
+  /// teacher's own batches, or a student's approved batches.
+  Future<List<LiveClass>> loadLiveClasses() async {
+    final since = DateTime.now()
+        .toUtc()
+        .subtract(const Duration(hours: 4))
+        .toIso8601String();
+    final rows = await client
+        .from('live_sessions')
+        .select(
+          'id,batch_id,title,description,starts_at,meeting_url,'
+          'batches(title,courses(title))',
+        )
+        .not('meeting_url', 'is', null)
+        .neq('status', 'cancelled')
+        .gte('starts_at', since)
+        .order('starts_at');
+    return rows
+        .map((row) {
+          final batch = row['batches'] as Map<String, dynamic>;
+          final course = batch['courses'] as Map<String, dynamic>;
+          return LiveClass(
+            id: row['id'] as String,
+            batchId: row['batch_id'] as String,
+            title: row['title'] as String,
+            description: row['description'] as String,
+            startsAt: DateTime.parse(row['starts_at'] as String).toLocal(),
+            meetingUrl: row['meeting_url'] as String,
+            batchTitle: batch['title'] as String,
+            courseTitle: course['title'] as String,
+          );
+        })
+        .toList(growable: false);
+  }
+
+  Future<void> scheduleLiveClass({
+    required String batchId,
+    required String title,
+    required String description,
+    required DateTime startsAt,
+    required String meetingUrl,
+  }) async {
+    final user = client.auth.currentUser;
+    if (user == null) throw const AuthException('Please sign in again.');
+    await client.from('live_sessions').insert({
+      'batch_id': batchId,
+      'created_by': user.id,
+      'title': title.trim(),
+      'description': description.trim(),
+      'starts_at': startsAt.toUtc().toIso8601String(),
+      'meeting_url': meetingUrl.trim(),
+    });
+  }
+
+  Future<void> deleteLiveClass(String id) async {
+    await client.from('live_sessions').delete().eq('id', id);
   }
 }

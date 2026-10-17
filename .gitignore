@@ -21,3 +21,5 @@ app/android/app/profile/
 *.apk
 *.aab
 *.sha256
+# Release signing key created by scripts/create-release-keystore.sh
+.release-keys/

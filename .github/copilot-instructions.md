@@ -1,5 +1,6 @@
 # Gyanify agent rules
-- Flutter app in app/, Supabase in supabase/. Branch: feat/app-foundation.
+- The full, current rules are in CLAUDE.md at the repository root. Follow them.
+- Flutter app in app/, Supabase in supabase/. Branch: main (there is no feat/app-foundation branch).
 - Flutter: $HOME/.local/share/gyanify/flutter/bin. Set ANDROID_HOME and ANDROID_SDK_ROOT to $HOME/.local/share/gyanify/android-sdk.
 - Use `set -o pipefail` whenever piping to tee. A step passed only if its exit code is 0.
 - Never claim something works without showing the command and the last lines of its output.

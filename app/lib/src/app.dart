@@ -4,8 +4,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 
 import 'backend.dart';
+import 'links.dart';
 
 const _authRedirectUrl = String.fromEnvironment(
   'SUPABASE_AUTH_REDIRECT_URL',
@@ -201,11 +204,12 @@ class _AuthPageState extends State<_AuthPage> {
           emailRedirectTo: _authRedirectUrl,
           data: {'display_name': _name.text.trim()},
         );
+        // With email confirmation off, sign-up signs the student in directly.
         if (response.session == null) {
           setState(() {
             _message =
-                'Account created. Verify your email using the link we sent '
-                'before signing in.';
+                'Account created. If you received a verification email, '
+                'open it first, then sign in.';
           });
         }
       } else {
@@ -472,13 +476,13 @@ class _MainShellState extends State<_MainShell> {
         ? [
             _TeacherCoursesPage(backend: widget.backend),
             _TeacherRequestsPage(backend: widget.backend),
-            const _LiveClassesPage(),
+            _LiveClassesPage(backend: widget.backend, isTeacher: true),
             _ProfilePage(displayName: widget.displayName),
           ]
         : [
             _CatalogPage(backend: widget.backend),
             _StudentLearningPage(backend: widget.backend),
-            const _LiveClassesPage(),
+            _LiveClassesPage(backend: widget.backend, isTeacher: false),
             _ProfilePage(displayName: widget.displayName),
           ];
     final destinations = isTeacher
@@ -531,17 +535,360 @@ class _MainShellState extends State<_MainShell> {
   }
 }
 
-class _LiveClassesPage extends StatelessWidget {
-  const _LiveClassesPage();
+class _LiveClassesPage extends StatefulWidget {
+  const _LiveClassesPage({required this.backend, required this.isTeacher});
+
+  final GyanifyBackend backend;
+  final bool isTeacher;
 
   @override
-  Widget build(BuildContext context) => const _EmptyState(
-    icon: Icons.video_camera_front_outlined,
-    title: 'Live classes',
-    detail:
-        'Scheduling and joining a Jitsi class are not connected yet. '
-        'The Jitsi plugin remains in this development build.',
+  State<_LiveClassesPage> createState() => _LiveClassesPageState();
+}
+
+class _LiveClassesPageState extends State<_LiveClassesPage> {
+  late Future<List<LiveClass>> _classes = widget.backend.loadLiveClasses();
+
+  Future<void> _refresh() async {
+    setState(() => _classes = widget.backend.loadLiveClasses());
+    await _classes;
+  }
+
+  Future<void> _schedule() async {
+    try {
+      final courses = await widget.backend.loadTeacherCourses();
+      final batches = [for (final c in courses) ...c.batches];
+      if (!mounted) return;
+      if (batches.isEmpty) {
+        _showMessage(context, 'Create a course and a batch first.');
+        return;
+      }
+      final input = await showDialog<_LiveClassInput>(
+        context: context,
+        builder: (_) => _ScheduleClassDialog(batches: batches),
+      );
+      if (input == null) return;
+      await widget.backend.scheduleLiveClass(
+        batchId: input.batchId,
+        title: input.title,
+        description: input.description,
+        startsAt: input.startsAt,
+        meetingUrl: input.meetingUrl,
+      );
+      await _refresh();
+      if (mounted) _showMessage(context, 'Live class scheduled.');
+    } catch (error) {
+      if (mounted) _showMessage(context, _errorText(error));
+    }
+  }
+
+  Future<void> _delete(LiveClass liveClass) async {
+    final confirmed = await _confirm(
+      context,
+      title: 'Delete this class?',
+      detail: '"${liveClass.title}" will disappear for students.',
+    );
+    if (!confirmed) return;
+    try {
+      await widget.backend.deleteLiveClass(liveClass.id);
+      await _refresh();
+    } catch (error) {
+      if (mounted) _showMessage(context, _errorText(error));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    floatingActionButton: widget.isTeacher
+        ? FloatingActionButton.extended(
+            onPressed: _schedule,
+            icon: const Icon(Icons.add),
+            label: const Text('Schedule class'),
+          )
+        : null,
+    body: FutureBuilder<List<LiveClass>>(
+      future: _classes,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _LoadError(
+            message:
+                'Could not load live classes: ${_errorText(snapshot.error!)}',
+            onRetry: _refresh,
+          );
+        }
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final classes = snapshot.data!;
+        return RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+            children: [
+              Text(
+                'Live classes',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                widget.isTeacher
+                    ? 'Paste a Google Meet or Zoom link. Students of that '
+                          'batch will see a Join button.'
+                    : 'Classes for your approved batches appear here.',
+              ),
+              const SizedBox(height: 12),
+              if (classes.isEmpty)
+                const _EmptyState(
+                  icon: Icons.video_camera_front_outlined,
+                  title: 'No upcoming classes',
+                  detail: 'Pull down to refresh.',
+                )
+              else
+                for (final liveClass in classes)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            liveClass.title,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          Text(
+                            '${liveClass.courseTitle} · ${liveClass.batchTitle}',
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _formatDateTime(context, liveClass.startsAt),
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (liveClass.description.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(liveClass.description),
+                          ],
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              if (widget.isTeacher)
+                                IconButton(
+                                  tooltip: 'Delete',
+                                  onPressed: () => _delete(liveClass),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                              const Spacer(),
+                              FilledButton.icon(
+                                onPressed: () => _openExternal(
+                                  context,
+                                  liveClass.meetingUrl,
+                                ),
+                                icon: const Icon(Icons.videocam_outlined),
+                                label: const Text('Join'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+            ],
+          ),
+        );
+      },
+    ),
   );
+}
+
+class _LiveClassInput {
+  const _LiveClassInput({
+    required this.batchId,
+    required this.title,
+    required this.description,
+    required this.startsAt,
+    required this.meetingUrl,
+  });
+
+  final String batchId;
+  final String title;
+  final String description;
+  final DateTime startsAt;
+  final String meetingUrl;
+}
+
+class _ScheduleClassDialog extends StatefulWidget {
+  const _ScheduleClassDialog({required this.batches});
+
+  final List<LearningBatch> batches;
+
+  @override
+  State<_ScheduleClassDialog> createState() => _ScheduleClassDialogState();
+}
+
+class _ScheduleClassDialogState extends State<_ScheduleClassDialog> {
+  final _title = TextEditingController();
+  final _link = TextEditingController();
+  final _description = TextEditingController();
+  late String _batchId = widget.batches.first.id;
+  DateTime? _date;
+  TimeOfDay? _time;
+  String? _error;
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _link.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date ?? now,
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (picked != null) setState(() => _date = picked);
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _time ?? TimeOfDay.now(),
+    );
+    if (picked != null) setState(() => _time = picked);
+  }
+
+  void _save() {
+    final date = _date;
+    final time = _time;
+    String? error;
+    if (_title.text.trim().isEmpty) {
+      error = 'Enter a class title.';
+    } else if (!isMeetingUrl(_link.text)) {
+      error = 'Paste a Google Meet or Zoom link starting with https://';
+    } else if (date == null || time == null) {
+      error = 'Choose the date and time.';
+    }
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
+    Navigator.pop(
+      context,
+      _LiveClassInput(
+        batchId: _batchId,
+        title: _title.text.trim(),
+        description: _description.text.trim(),
+        startsAt: DateTime(
+          date!.year,
+          date.month,
+          date.day,
+          time!.hour,
+          time.minute,
+        ),
+        meetingUrl: _link.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final localizations = MaterialLocalizations.of(context);
+    return AlertDialog(
+      title: const Text('Schedule live class'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _batchId,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Batch'),
+              items: [
+                for (final batch in widget.batches)
+                  DropdownMenuItem(
+                    value: batch.id,
+                    child: Text(
+                      '${batch.courseTitle} · ${batch.title}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _batchId = value);
+              },
+            ),
+            TextField(
+              controller: _title,
+              maxLength: 200,
+              decoration: const InputDecoration(labelText: 'Class title'),
+            ),
+            TextField(
+              controller: _link,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                labelText: 'Google Meet or Zoom link',
+                hintText: 'https://meet.google.com/...',
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pickDate,
+                    icon: const Icon(Icons.calendar_today, size: 18),
+                    label: Text(
+                      _date == null
+                          ? 'Date'
+                          : localizations.formatShortDate(_date!),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pickTime,
+                    icon: const Icon(Icons.schedule, size: 18),
+                    label: Text(
+                      _time == null
+                          ? 'Time'
+                          : localizations.formatTimeOfDay(_time!),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            TextField(
+              controller: _description,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Note for students (optional)',
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('Save')),
+      ],
+    );
+  }
 }
 
 class _ProfilePage extends StatelessWidget {
@@ -953,10 +1300,11 @@ class _TeacherRequestsPageState extends State<_TeacherRequestsPage> {
       await widget.backend.reviewEnrollment(request.id, status);
       await _refresh();
       if (mounted) {
-        _showMessage(
-          context,
-          'Request ${status == 'approved' ? 'approved' : 'rejected'}.',
-        );
+        _showMessage(context, switch (status) {
+          'approved' => 'Student approved.',
+          'revoked' => 'Access removed.',
+          _ => 'Request rejected.',
+        });
       }
     } catch (error) {
       if (mounted) _showMessage(context, _errorText(error));
@@ -1006,6 +1354,8 @@ class _TeacherRequestsPageState extends State<_TeacherRequestsPage> {
                         request.studentName,
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
+                      if (request.studentEmail.isNotEmpty)
+                        Text(request.studentEmail),
                       Text('${request.courseTitle} · ${request.batchTitle}'),
                       const SizedBox(height: 8),
                       if (request.status == 'pending')
@@ -1023,7 +1373,27 @@ class _TeacherRequestsPageState extends State<_TeacherRequestsPage> {
                           ],
                         )
                       else
-                        Text('Status: ${request.status}'),
+                        Row(
+                          children: [
+                            Text(switch (request.status) {
+                              'approved' => 'Approved',
+                              'rejected' => 'Rejected',
+                              'revoked' => 'Access removed',
+                              _ => request.status,
+                            }),
+                            const Spacer(),
+                            if (request.status == 'approved')
+                              TextButton(
+                                onPressed: () => _review(request, 'revoked'),
+                                child: const Text('Remove access'),
+                              )
+                            else
+                              TextButton(
+                                onPressed: () => _review(request, 'approved'),
+                                child: const Text('Approve'),
+                              ),
+                          ],
+                        ),
                     ],
                   ),
                 ),
@@ -1104,9 +1474,102 @@ class _MaterialsPageState extends State<_MaterialsPage> {
     }
   }
 
+  Future<void> _addVideo() async {
+    final input = await _showTextForm(
+      context,
+      title: 'Add a YouTube video',
+      nameLabel: 'Video title',
+      linkLabel: 'YouTube link (Unlisted is fine)',
+      linkValidator: (value) =>
+          youtubeVideoId(value) == null ? 'Paste a YouTube video link' : null,
+    );
+    if (input == null) return;
+    try {
+      await widget.backend.addVideo(
+        batchId: widget.batch.id,
+        title: input.$1,
+        description: input.$2,
+        youtubeUrl: canonicalYoutubeUrl(youtubeVideoId(input.$3)!),
+      );
+      await _refresh();
+      if (mounted) _showMessage(context, 'Video added.');
+    } catch (error) {
+      if (mounted) _showMessage(context, _errorText(error));
+    }
+  }
+
+  Future<void> _chooseAdd() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf_outlined),
+              title: const Text('Upload PDF / notes'),
+              onTap: () => Navigator.pop(sheetContext, 'pdf'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.smart_display_outlined),
+              title: const Text('Add YouTube video link'),
+              onTap: () => Navigator.pop(sheetContext, 'video'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == 'pdf') await _uploadPdf();
+    if (choice == 'video') await _addVideo();
+  }
+
+  Future<void> _open(LearningMaterial material) async {
+    if (material.isVideo) {
+      final id = youtubeVideoId(material.youtubeUrl ?? '');
+      if (id == null) {
+        _showMessage(context, 'This video link is not valid.');
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _VideoPage(title: material.title, videoId: id),
+        ),
+      );
+    } else {
+      await _openPdf(material);
+    }
+  }
+
+  Future<void> _downloadPdf(LearningMaterial material) async {
+    try {
+      final url = await widget.backend.createPdfDownloadLink(
+        material.storagePath!,
+        material.title,
+      );
+      if (mounted) await _openExternal(context, url);
+    } catch (error) {
+      if (mounted) _showMessage(context, _errorText(error));
+    }
+  }
+
+  Future<void> _delete(LearningMaterial material) async {
+    final confirmed = await _confirm(
+      context,
+      title: 'Delete this material?',
+      detail: '"${material.title}" will be removed for all students.',
+    );
+    if (!confirmed) return;
+    try {
+      await widget.backend.deleteMaterial(material);
+      await _refresh();
+    } catch (error) {
+      if (mounted) _showMessage(context, _errorText(error));
+    }
+  }
+
   Future<void> _openPdf(LearningMaterial material) async {
     try {
-      final url = await widget.backend.createPdfLink(material.storagePath);
+      final url = await widget.backend.createPdfLink(material.storagePath!);
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -1144,9 +1607,9 @@ class _MaterialsPageState extends State<_MaterialsPage> {
         appBar: AppBar(title: Text(widget.batch.title)),
         floatingActionButton: widget.canUpload
             ? FloatingActionButton.extended(
-                onPressed: _uploadPdf,
-                icon: const Icon(Icons.upload_file),
-                label: const Text('Upload PDF'),
+                onPressed: _chooseAdd,
+                icon: const Icon(Icons.add),
+                label: const Text('Add material'),
               )
             : null,
         body: RefreshIndicator(
@@ -1163,7 +1626,7 @@ class _MaterialsPageState extends State<_MaterialsPage> {
                   ],
                 )
               : ListView(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
                   children: [
                     Text(
                       widget.batch.courseTitle,
@@ -1173,13 +1636,33 @@ class _MaterialsPageState extends State<_MaterialsPage> {
                     for (final material in materials)
                       Card(
                         child: ListTile(
-                          leading: const Icon(Icons.picture_as_pdf),
+                          leading: Icon(
+                            material.isVideo
+                                ? Icons.smart_display
+                                : Icons.picture_as_pdf,
+                          ),
                           title: Text(material.title),
                           subtitle: material.description.isEmpty
                               ? null
                               : Text(material.description),
-                          trailing: const Icon(Icons.open_in_new),
-                          onTap: () => _openPdf(material),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (material.isPdf)
+                                IconButton(
+                                  tooltip: 'Download',
+                                  onPressed: () => _downloadPdf(material),
+                                  icon: const Icon(Icons.download),
+                                ),
+                              if (widget.canUpload)
+                                IconButton(
+                                  tooltip: 'Delete',
+                                  onPressed: () => _delete(material),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                            ],
+                          ),
+                          onTap: () => _open(material),
                         ),
                       ),
                   ],
@@ -1187,6 +1670,64 @@ class _MaterialsPageState extends State<_MaterialsPage> {
         ),
       );
     },
+  );
+}
+
+class _VideoPage extends StatefulWidget {
+  const _VideoPage({required this.title, required this.videoId});
+
+  final String title;
+  final String videoId;
+
+  @override
+  State<_VideoPage> createState() => _VideoPageState();
+}
+
+class _VideoPageState extends State<_VideoPage> {
+  late final YoutubePlayerController _controller =
+      YoutubePlayerController.fromVideoId(
+        videoId: widget.videoId,
+        autoPlay: true,
+        params: const YoutubePlayerParams(
+          showFullscreenButton: true,
+          strictRelatedVideos: true,
+        ),
+      );
+
+  @override
+  void dispose() {
+    _controller.close();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(widget.title)),
+    body: ListView(
+      children: [
+        YoutubePlayer(controller: _controller),
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.title, style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              const Text(
+                'Video not playing? Open it in the YouTube app instead.',
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () =>
+                    _openExternal(context, canonicalYoutubeUrl(widget.videoId)),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Open in YouTube'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
   );
 }
 
@@ -1203,34 +1744,54 @@ class _PdfPage extends StatelessWidget {
   );
 }
 
-Future<(String, String)?> _showTextForm(
+/// Returns (name, description, link). The link field is shown only when
+/// [linkLabel] is given.
+Future<(String, String, String)?> _showTextForm(
   BuildContext context, {
   required String title,
   required String nameLabel,
+  String? linkLabel,
+  String? Function(String value)? linkValidator,
 }) {
   final name = TextEditingController();
+  final link = TextEditingController();
   final description = TextEditingController();
-  return showDialog<(String, String)>(
+  final formKey = GlobalKey<FormState>();
+  return showDialog<(String, String, String)>(
     context: context,
     builder: (dialogContext) => AlertDialog(
       title: Text(title),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: name,
-            autofocus: true,
-            maxLength: 200,
-            decoration: InputDecoration(labelText: nameLabel),
+      content: Form(
+        key: formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: name,
+                autofocus: true,
+                maxLength: 200,
+                decoration: InputDecoration(labelText: nameLabel),
+                validator: (value) =>
+                    value == null || value.trim().isEmpty ? 'Required' : null,
+              ),
+              if (linkLabel != null)
+                TextFormField(
+                  controller: link,
+                  keyboardType: TextInputType.url,
+                  decoration: InputDecoration(labelText: linkLabel),
+                  validator: (value) => linkValidator?.call(value ?? ''),
+                ),
+              TextField(
+                controller: description,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Description (optional)',
+                ),
+              ),
+            ],
           ),
-          TextField(
-            controller: description,
-            maxLines: 3,
-            decoration: const InputDecoration(
-              labelText: 'Description (optional)',
-            ),
-          ),
-        ],
+        ),
       ),
       actions: [
         TextButton(
@@ -1239,10 +1800,11 @@ Future<(String, String)?> _showTextForm(
         ),
         FilledButton(
           onPressed: () {
-            if (name.text.trim().isEmpty) return;
+            if (!formKey.currentState!.validate()) return;
             Navigator.pop(dialogContext, (
               name.text.trim(),
               description.text.trim(),
+              link.text.trim(),
             ));
           },
           child: const Text('Save'),
@@ -1251,8 +1813,50 @@ Future<(String, String)?> _showTextForm(
     ),
   ).whenComplete(() {
     name.dispose();
+    link.dispose();
     description.dispose();
   });
+}
+
+Future<bool> _confirm(
+  BuildContext context, {
+  required String title,
+  required String detail,
+}) async {
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(title),
+      content: Text(detail),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+  return result ?? false;
+}
+
+/// Opens Meet, Zoom, YouTube or a download link outside the app.
+Future<void> _openExternal(BuildContext context, String url) async {
+  final uri = Uri.tryParse(url);
+  final opened =
+      uri != null && await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!opened && context.mounted) {
+    _showMessage(context, 'Could not open the link.');
+  }
+}
+
+String _formatDateTime(BuildContext context, DateTime value) {
+  final localizations = MaterialLocalizations.of(context);
+  return '${localizations.formatFullDate(value)} · '
+      '${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(value))}';
 }
 
 class _LoadError extends StatelessWidget {
