@@ -55,4 +55,17 @@ void main() {
     }
     expect(offenders, isEmpty, reason: offenders.join('\n'));
   });
+
+  test('every Supabase .order() says which direction', () {
+    // postgrest-dart's order() defaults to DESCENDING, which silently
+    // reversed folders, items, courses and live classes.
+    final source = File('lib/src/backend.dart').readAsStringSync();
+    final orders = RegExp(r'\.order\(([^)]*)\)').allMatches(source).toList();
+    expect(orders, isNotEmpty);
+    final missing = [
+      for (final m in orders)
+        if (!m.group(1)!.contains('ascending:')) m.group(0)!,
+    ];
+    expect(missing, isEmpty, reason: missing.join('\n'));
+  });
 }

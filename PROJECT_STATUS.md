@@ -100,6 +100,31 @@ Not verified:
 - Verified locally: `flutter analyze` no issues; `flutter test` 18 passed, 1 skipped.
 - Not verified: how the label and header look on a real phone.
 
+### 2026-10-18 — refresh bug, folders (chapters), YouTube title
+
+- Bug: after adding a course/batch/material the list only updated after going back
+  ("setState() callback argument returned a Future"). All 25 `setState(() => …)` in lib/
+  are now block bodies (the role retry had the same bug). Verified locally:
+  `test/refresh_test.dart` failed on the old code (course not shown) and passes now; a guard
+  test fails if the arrow pattern comes back.
+- Found while testing folders: postgrest-dart's `.order()` defaults to descending, so
+  courses were Z→A and live classes latest-first. Every `.order()` now says `ascending:`.
+- Folders: new migration `202610180001_material_folders.sql` (older files untouched).
+  Same rules as materials (teacher writes, approved students read, anon nothing); a material
+  can only sit in a folder of its own batch; a non-empty folder cannot be deleted.
+  Teacher: create, rename, delete (empty only), reorder folders; pick a folder when adding;
+  move items; reorder items (up/down). Students: folder list → items numbered 1, 2, 3 in
+  the teacher's order. Old materials show under "Other materials".
+- Before the SQL is run the app shows "The database needs an update … run
+  supabase/migrations/202610180001_material_folders.sql" (students: "Your teacher is
+  updating this class"), no crash. Verified against local Supabase with the table hidden.
+- YouTube: pasting a link fills the title from oEmbed (no API key); if that fails the teacher
+  types it; a typed title is never overwritten; thumbnail next to the title and in lists.
+- Verified locally: `flutter analyze` no issues; `flutter test` 48 passed (incl. 2 backend
+  integration tests on local Supabase); `security_test.mjs` 54 passed, 0 failed; with two
+  deliberately opened folder holes it reported 3 failures.
+- Not verified: on a real phone; on the live Supabase (folders SQL not run there yet).
+
 ## Owner setup required
 
 See the numbered list in the final report of the 2026-10-17 session (also repeated in

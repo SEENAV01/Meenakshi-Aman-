@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,9 @@ import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import 'backend.dart';
 import 'dialogs.dart';
 import 'links.dart';
+import 'youtube.dart';
+
+part 'batch_pages.dart';
 
 /// The name people see. Internal IDs (package name, gyanify:// scheme,
 /// database) keep the old "gyanify" name on purpose.
@@ -889,10 +893,10 @@ class _CatalogPageState extends State<_CatalogPage> {
                             onRequest: () => _request(batch),
                             onOpen: () => Navigator.of(context).push(
                               MaterialPageRoute<void>(
-                                builder: (_) => _MaterialsPage(
+                                builder: (_) => BatchPage(
                                   backend: widget.backend,
                                   batch: batch,
-                                  canUpload: false,
+                                  isTeacher: false,
                                 ),
                               ),
                             ),
@@ -1007,10 +1011,10 @@ class _StudentLearningPageState extends State<_StudentLearningPage> {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
-                      builder: (_) => _MaterialsPage(
+                      builder: (_) => BatchPage(
                         backend: widget.backend,
                         batch: batch,
-                        canUpload: false,
+                        isTeacher: false,
                       ),
                     ),
                   ),
@@ -1137,10 +1141,10 @@ class _TeacherCoursesPageState extends State<TeacherCoursesPage> {
                             trailing: const Icon(Icons.chevron_right),
                             onTap: () => Navigator.of(context).push(
                               MaterialPageRoute<void>(
-                                builder: (_) => _MaterialsPage(
+                                builder: (_) => BatchPage(
                                   backend: widget.backend,
                                   batch: batch,
-                                  canUpload: true,
+                                  isTeacher: true,
                                 ),
                               ),
                             ),
@@ -1288,276 +1292,6 @@ class _TeacherRequestsPageState extends State<_TeacherRequestsPage> {
                 ),
               ),
           ],
-        ),
-      );
-    },
-  );
-}
-
-class _MaterialsPage extends StatefulWidget {
-  const _MaterialsPage({
-    required this.backend,
-    required this.batch,
-    required this.canUpload,
-  });
-
-  final GyanifyBackend backend;
-  final LearningBatch batch;
-  final bool canUpload;
-
-  @override
-  State<_MaterialsPage> createState() => _MaterialsPageState();
-}
-
-class _MaterialsPageState extends State<_MaterialsPage> {
-  late Future<List<LearningMaterial>> _materials = widget.backend.loadMaterials(
-    widget.batch.id,
-  );
-
-  Future<void> _refresh() async {
-    setState(() {
-      _materials = widget.backend.loadMaterials(widget.batch.id);
-    });
-    await _materials;
-  }
-
-  Future<void> _uploadPdf() async {
-    final input = await showTextForm(
-      context,
-      title: 'Upload a PDF',
-      nameLabel: 'Material title',
-    );
-    if (input == null) return;
-    try {
-      final result = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['pdf'],
-      );
-      if (result.isEmpty) return;
-      final file = result.single;
-      final fileLength = await file.length();
-      if (fileLength == null) {
-        throw StateError('The selected PDF size could not be read.');
-      }
-      if (fileLength > 20 * 1024 * 1024) {
-        throw StateError('PDF must be 20 MB or smaller.');
-      }
-      if (!file.name.toLowerCase().endsWith('.pdf')) {
-        throw StateError('Choose a PDF file.');
-      }
-      final bytes = await file.readAsBytes();
-      if (bytes.length < 5 || String.fromCharCodes(bytes.take(5)) != '%PDF-') {
-        throw StateError(
-          'The selected file does not contain a valid PDF header.',
-        );
-      }
-      await widget.backend.uploadPdf(
-        batchId: widget.batch.id,
-        title: input.$1,
-        description: input.$2,
-        fileName: file.name.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_'),
-        bytes: bytes,
-      );
-      await _refresh();
-      if (mounted) _showMessage(context, 'PDF uploaded.');
-    } catch (error) {
-      if (mounted) _showMessage(context, _errorText(error));
-    }
-  }
-
-  Future<void> _addVideo() async {
-    final input = await showTextForm(
-      context,
-      title: 'Add a YouTube video',
-      nameLabel: 'Video title',
-      linkLabel: 'YouTube link (Unlisted is fine)',
-      linkValidator: (value) =>
-          youtubeVideoId(value) == null ? 'Paste a YouTube video link' : null,
-    );
-    if (input == null) return;
-    try {
-      await widget.backend.addVideo(
-        batchId: widget.batch.id,
-        title: input.$1,
-        description: input.$2,
-        youtubeUrl: canonicalYoutubeUrl(youtubeVideoId(input.$3)!),
-      );
-      await _refresh();
-      if (mounted) _showMessage(context, 'Video added.');
-    } catch (error) {
-      if (mounted) _showMessage(context, _errorText(error));
-    }
-  }
-
-  Future<void> _chooseAdd() async {
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.picture_as_pdf_outlined),
-              title: const Text('Upload PDF / notes'),
-              onTap: () => Navigator.pop(sheetContext, 'pdf'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.smart_display_outlined),
-              title: const Text('Add YouTube video link'),
-              onTap: () => Navigator.pop(sheetContext, 'video'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (choice == 'pdf') await _uploadPdf();
-    if (choice == 'video') await _addVideo();
-  }
-
-  Future<void> _open(LearningMaterial material) async {
-    if (material.isVideo) {
-      final id = youtubeVideoId(material.youtubeUrl ?? '');
-      if (id == null) {
-        _showMessage(context, 'This video link is not valid.');
-        return;
-      }
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => _VideoPage(title: material.title, videoId: id),
-        ),
-      );
-    } else {
-      await _openPdf(material);
-    }
-  }
-
-  Future<void> _downloadPdf(LearningMaterial material) async {
-    try {
-      final url = await widget.backend.createPdfDownloadLink(
-        material.storagePath!,
-        material.title,
-      );
-      if (mounted) await _openExternal(context, url);
-    } catch (error) {
-      if (mounted) _showMessage(context, _errorText(error));
-    }
-  }
-
-  Future<void> _delete(LearningMaterial material) async {
-    final confirmed = await showConfirmDialog(
-      context,
-      title: 'Delete this material?',
-      detail: '"${material.title}" will be removed for all students.',
-    );
-    if (!confirmed) return;
-    try {
-      await widget.backend.deleteMaterial(material);
-      await _refresh();
-    } catch (error) {
-      if (mounted) _showMessage(context, _errorText(error));
-    }
-  }
-
-  Future<void> _openPdf(LearningMaterial material) async {
-    try {
-      final url = await widget.backend.createPdfLink(material.storagePath!);
-      if (!mounted) return;
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => _PdfPage(title: material.title, url: url),
-        ),
-      );
-    } catch (error) {
-      if (mounted) _showMessage(context, _errorText(error));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => FutureBuilder<List<LearningMaterial>>(
-    future: _materials,
-    builder: (context, snapshot) {
-      if (snapshot.hasError) {
-        return Scaffold(
-          appBar: AppBar(title: Text(widget.batch.title)),
-          body: _LoadError(
-            message:
-                'Could not load protected materials: '
-                '${_errorText(snapshot.error!)}',
-            onRetry: _refresh,
-          ),
-        );
-      }
-      if (!snapshot.hasData) {
-        return Scaffold(
-          appBar: AppBar(title: Text(widget.batch.title)),
-          body: const Center(child: CircularProgressIndicator()),
-        );
-      }
-      final materials = snapshot.data!;
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.batch.title)),
-        floatingActionButton: widget.canUpload
-            ? FloatingActionButton.extended(
-                onPressed: _chooseAdd,
-                icon: const Icon(Icons.add),
-                label: const Text('Add material'),
-              )
-            : null,
-        body: RefreshIndicator(
-          onRefresh: _refresh,
-          child: materials.isEmpty
-              ? ListView(
-                  children: const [
-                    SizedBox(height: 100),
-                    _EmptyState(
-                      icon: Icons.picture_as_pdf_outlined,
-                      title: 'No learning materials yet',
-                      detail: 'Your teacher will add content here.',
-                    ),
-                  ],
-                )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-                  children: [
-                    Text(
-                      widget.batch.courseTitle,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    for (final material in materials)
-                      Card(
-                        child: ListTile(
-                          leading: Icon(
-                            material.isVideo
-                                ? Icons.smart_display
-                                : Icons.picture_as_pdf,
-                          ),
-                          title: Text(material.title),
-                          subtitle: material.description.isEmpty
-                              ? null
-                              : Text(material.description),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (material.isPdf)
-                                IconButton(
-                                  tooltip: 'Download',
-                                  onPressed: () => _downloadPdf(material),
-                                  icon: const Icon(Icons.download),
-                                ),
-                              if (widget.canUpload)
-                                IconButton(
-                                  tooltip: 'Delete',
-                                  onPressed: () => _delete(material),
-                                  icon: const Icon(Icons.delete_outline),
-                                ),
-                            ],
-                          ),
-                          onTap: () => _open(material),
-                        ),
-                      ),
-                  ],
-                ),
         ),
       );
     },

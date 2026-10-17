@@ -179,6 +179,13 @@ async function main() {
   const pdfPath = `${batch.id}/sectest-${Date.now()}.pdf`;
 
   try {
+    const folder = must(
+      await rest('POST', 'material_folders', {
+        token: teacher.token,
+        body: { batch_id: batch.id, created_by: teacher.id, title: `${PREFIX} Chapter 1`, display_order: 0 },
+      }),
+      'teacher creates folder',
+    )[0];
     must(
       await call('POST', `/storage/v1/object/${BUCKET}/${pdfPath}`, {
         token: teacher.token,
@@ -196,6 +203,8 @@ async function main() {
           kind: 'pdf',
           title: `${PREFIX} pdf`,
           storage_path: pdfPath,
+          folder_id: folder.id,
+          display_order: 0,
         },
       }),
       'teacher adds PDF row',
@@ -209,6 +218,8 @@ async function main() {
           kind: 'youtube_video',
           title: `${PREFIX} video`,
           youtube_url: 'https://youtu.be/dQw4w9WgXcQ',
+          folder_id: folder.id,
+          display_order: 1,
         },
       }),
       'teacher adds video row',
@@ -284,6 +295,8 @@ async function main() {
     const mats = await rest('GET', `learning_materials?select=id,storage_path&batch_id=eq.${batch.id}`, { token: rejected.token });
     check('cannot list learning_materials rows', Array.isArray(mats.json) && mats.json.length === 0, `HTTP ${mats.status} ${JSON.stringify(mats.json)}`);
     const lives = await rest('GET', `live_sessions?select=id,meeting_url&batch_id=eq.${batch.id}`, { token: rejected.token });
+    const rejFolders = await rest('GET', `material_folders?select=id,title&batch_id=eq.${batch.id}`, { token: rejected.token });
+    check('cannot list folders', Array.isArray(rejFolders.json) && rejFolders.json.length === 0, `HTTP ${rejFolders.status} ${JSON.stringify(rejFolders.json)}`);
     check('cannot see live class links', Array.isArray(lives.json) && lives.json.length === 0, `HTTP ${lives.status}`);
     const list = await call('POST', `/storage/v1/object/list/${BUCKET}`, { token: rejected.token, body: { prefix: batch.id, limit: 100 } });
     check('cannot list storage folder', !ok2xx(list) || (Array.isArray(list.json) && list.json.length === 0), `HTTP ${list.status} ${JSON.stringify(list.json)}`);
@@ -347,6 +360,14 @@ async function main() {
         headers: { 'Content-Type': 'application/pdf' },
       });
       check(`${label}: cannot upload into the batch folder`, !ok2xx(up), `HTTP ${up.status}`);
+      const f = await rest('POST', 'material_folders', {
+        token: s.token,
+        body: { batch_id: batch.id, created_by: s.id, title: `${PREFIX} student folder` },
+      });
+      check(`${label}: cannot create a folder`, !ok2xx(f), `HTTP ${f.status}`);
+      await rest('PATCH', `material_folders?id=eq.${folder.id}`, { token: s.token, body: { title: `${PREFIX} hacked`, display_order: 99 } });
+      await rest('DELETE', `material_folders?id=eq.${folder.id}`, { token: s.token });
+      await rest('PATCH', `learning_materials?batch_id=eq.${batch.id}`, { token: s.token, body: { folder_id: null, display_order: 99 } });
       await rest('PATCH', `courses?id=eq.${course.id}`, { token: s.token, body: { title: `${PREFIX} hacked` } });
       await rest('DELETE', `learning_materials?batch_id=eq.${batch.id}`, { token: s.token });
       await call('DELETE', `/storage/v1/object/${BUCKET}`, { token: s.token, body: { prefixes: [pdfPath] } });
@@ -355,17 +376,25 @@ async function main() {
     check('course title unchanged by students', after[0]?.title === `${PREFIX} delete me`, JSON.stringify(after));
     const matsAfter = must(await rest('GET', `learning_materials?select=id&batch_id=eq.${batch.id}`, { token: teacher.token }), 'reread materials');
     check('materials not deleted by students', matsAfter.length === 2, `${matsAfter.length} rows`);
+    const folderAfter = must(await rest('GET', `material_folders?select=title,display_order&id=eq.${folder.id}`, { token: teacher.token }), 'reread folder');
+    check('folder not renamed, reordered or deleted by students', folderAfter.length === 1 && folderAfter[0].title === `${PREFIX} Chapter 1` && folderAfter[0].display_order === 0, JSON.stringify(folderAfter));
+    const placed = must(await rest('GET', `learning_materials?select=folder_id,display_order&batch_id=eq.${batch.id}&order=display_order`, { token: teacher.token }), 'reread placement');
+    check('materials not moved or reordered by students', placed.every((m, i) => m.folder_id === folder.id && m.display_order === i), JSON.stringify(placed));
     const fileAfter = await call('GET', `/storage/v1/object/authenticated/${BUCKET}/${pdfPath}`, { token: teacher.token, raw: true });
     check('PDF not deleted by students', ok2xx(fileAfter), `HTTP ${fileAfter.status}`);
 
     console.log('\n5. Signed-out visitor sees nothing');
     const anonCourses = await rest('GET', 'courses?select=id');
+    const anonFolders = await rest('GET', 'material_folders?select=id');
+    check('anon cannot list folders', !ok2xx(anonFolders) || (Array.isArray(anonFolders.json) && anonFolders.json.length === 0), `HTTP ${anonFolders.status}`);
     check('anon cannot list courses', !ok2xx(anonCourses) || (Array.isArray(anonCourses.json) && anonCourses.json.length === 0), `HTTP ${anonCourses.status}`);
     const anonFile = await call('GET', `/storage/v1/object/public/${BUCKET}/${pdfPath}`, { raw: true });
     check('anon cannot download the PDF', !ok2xx(anonFile), `HTTP ${anonFile.status}`);
 
     console.log('\n6. Positive control: approved student DOES get access (proves the test is real)');
     const goodMats = await rest('GET', `learning_materials?select=kind&batch_id=eq.${batch.id}`, { token: approved.token });
+    const goodFolders = await rest('GET', `material_folders?select=id,title&batch_id=eq.${batch.id}`, { token: approved.token });
+    check('approved student sees the folder', goodFolders.json?.length === 1 && goodFolders.json[0].id === folder.id, JSON.stringify(goodFolders.json));
     check('approved student lists 2 materials', Array.isArray(goodMats.json) && goodMats.json.length === 2, JSON.stringify(goodMats.json));
     const goodLive = await rest('GET', `live_sessions?select=meeting_url&batch_id=eq.${batch.id}`, { token: approved.token });
     check('approved student sees the live class link', goodLive.json?.[0]?.meeting_url === 'https://meet.google.com/abc-defg-hij', JSON.stringify(goodLive.json));
@@ -383,6 +412,8 @@ async function main() {
       body: { status: 'revoked', reviewed_at: new Date().toISOString() },
     }), 'teacher revokes');
     const revMats = await rest('GET', `learning_materials?select=id&batch_id=eq.${batch.id}`, { token: approved.token });
+    const revFolders = await rest('GET', `material_folders?select=id&batch_id=eq.${batch.id}`, { token: approved.token });
+    check('revoked student cannot list folders', Array.isArray(revFolders.json) && revFolders.json.length === 0, JSON.stringify(revFolders.json));
     check('revoked student cannot list materials', Array.isArray(revMats.json) && revMats.json.length === 0, JSON.stringify(revMats.json));
     const revFile = await call('GET', `/storage/v1/object/authenticated/${BUCKET}/${pdfPath}`, { token: approved.token, raw: true });
     check('revoked student cannot download', !ok2xx(revFile), `HTTP ${revFile.status}`);
@@ -398,6 +429,17 @@ async function main() {
       body: { batch_id: batch.id, created_by: teacher.id, title: 'x', starts_at: new Date().toISOString(), meeting_url: 'https://meet.jit.si/room' },
     });
     check('Jitsi / non Meet-Zoom link is refused', !ok2xx(badMeet), `HTTP ${badMeet.status}`);
+    const otherFolder = must(await rest('POST', 'material_folders', {
+      token: teacher.token,
+      body: { batch_id: otherBatch.id, created_by: teacher.id, title: `${PREFIX} other batch folder` },
+    }), 'teacher creates folder in batch 2')[0];
+    const crossMove = await rest('PATCH', `learning_materials?batch_id=eq.${batch.id}`, { token: teacher.token, body: { folder_id: otherFolder.id } });
+    check('a material cannot be put in another batch\'s folder', !ok2xx(crossMove), `HTTP ${crossMove.status}`);
+    const fullDelete = await rest('DELETE', `material_folders?id=eq.${folder.id}`, { token: teacher.token });
+    const stillThere = must(await rest('GET', `material_folders?select=id&id=eq.${folder.id}`, { token: teacher.token }), 'reread folder');
+    check('a folder with materials cannot be deleted', !ok2xx(fullDelete) && stillThere.length === 1, `HTTP ${fullDelete.status}`);
+    const blank = await rest('POST', 'material_folders', { token: teacher.token, body: { batch_id: batch.id, created_by: teacher.id, title: '   ' } });
+    check('a folder needs a real title', !ok2xx(blank), `HTTP ${blank.status}`);
   } finally {
     await cleanup(teacher);
   }

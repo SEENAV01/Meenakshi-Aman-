@@ -11,8 +11,12 @@ The owner is a teacher, not a developer: talk in simple Hinglish, ask one
 question at a time and only when truly blocked.
 
 ## Layout
-- Flutter app in `app/` (`lib/src/app.dart` UI, `backend.dart` Supabase calls,
-  `links.dart` YouTube / Meet / Zoom link checks).
+- Flutter app in `app/` (`lib/src/app.dart` UI, `batch_pages.dart` batch → folders →
+  numbered materials, `dialogs.dart` forms, `backend.dart` Supabase calls,
+  `links.dart` YouTube / Meet / Zoom link checks, `youtube.dart` oEmbed title + thumbnail).
+- Flutter rules learned the hard way: `setState(() { ... });` always with a block body
+  (an arrow returning a Future asserts); every Supabase `.order()` passes `ascending:`
+  explicitly (postgrest-dart defaults to DESCENDING). Both are guarded by test/refresh_test.dart.
 - Supabase in `supabase/` (`migrations/`, `tests/security_test.mjs`).
 - Branch: `main`. All work, commits and pushes go to `main`
   (there is no `feat/app-foundation` branch).

@@ -171,4 +171,134 @@ void main() {
     skip: skip,
     timeout: const Timeout(Duration(minutes: 2)),
   );
+
+  test(
+    'folders: create, order, add into, move, reorder; student reads in order',
+    () async {
+      final teacherClient = newClient();
+      final studentClient = newClient();
+      final teacher = GyanifyBackend(teacherClient);
+      final student = GyanifyBackend(studentClient);
+      String? courseId;
+      try {
+        await teacherClient.auth.signInWithPassword(
+          email: teacherEmail!,
+          password: teacherPassword!,
+        );
+        courseId = await teacher.createCourse('IT folders', '');
+        await teacher.createBatch(courseId, 'IT folder batch', '');
+        final batch = (await teacher.loadTeacherCourses())
+            .firstWhere((c) => c.id == courseId)
+            .batches
+            .single;
+
+        await teacher.createFolder(
+          batchId: batch.id,
+          title: 'Chapter 1 – Greetings',
+          displayOrder: 0,
+        );
+        await teacher.createFolder(
+          batchId: batch.id,
+          title: 'Chapter 2',
+          displayOrder: 1,
+        );
+        var folders = await teacher.loadFolders(batch.id);
+        expect(folders.map((f) => f.title), [
+          'Chapter 1 – Greetings',
+          'Chapter 2',
+        ]);
+        await teacher.renameFolder(folders[1].id, 'Chapter 2 – Numbers');
+        await teacher.reorderFolders([folders[1], folders[0]]);
+        folders = await teacher.loadFolders(batch.id);
+        expect(folders.map((f) => f.title), [
+          'Chapter 2 – Numbers',
+          'Chapter 1 – Greetings',
+        ]);
+        final ch1 = folders[1];
+        final ch2 = folders[0];
+
+        // Three items in Chapter 1, in order.
+        await teacher.uploadPdf(
+          batchId: batch.id,
+          title: 'Notes A',
+          description: '',
+          fileName: 'a.pdf',
+          bytes: Uint8List.fromList('%PDF-1.4\n%%EOF\n'.codeUnits),
+          folderId: ch1.id,
+          displayOrder: 0,
+        );
+        for (final (i, title) in [(1, 'Video B'), (2, 'Video C')]) {
+          await teacher.addVideo(
+            batchId: batch.id,
+            title: title,
+            description: '',
+            youtubeUrl: canonicalYoutubeUrl('dQw4w9WgXcQ'),
+            folderId: ch1.id,
+            displayOrder: i,
+          );
+        }
+        List<String> titlesIn(List<LearningMaterial> all, String folderId) => [
+          for (final m in all.where((m) => m.folderId == folderId)) m.title,
+        ];
+        var all = await teacher.loadMaterials(batch.id);
+        expect(titlesIn(all, ch1.id), ['Notes A', 'Video B', 'Video C']);
+
+        // Swap B and C, then move A to Chapter 2.
+        final inCh1 = all.where((m) => m.folderId == ch1.id).toList();
+        await teacher.reorderMaterials([inCh1[0], inCh1[2], inCh1[1]]);
+        await teacher.moveMaterial(inCh1[0], folderId: ch2.id, displayOrder: 0);
+        all = await teacher.loadMaterials(batch.id);
+        expect(titlesIn(all, ch1.id), ['Video C', 'Video B']);
+        expect(titlesIn(all, ch2.id), ['Notes A']);
+
+        // A folder with items cannot be deleted; an emptied one can.
+        await expectLater(teacher.deleteFolder(ch2.id), throwsA(anything));
+        await teacher.moveMaterial(
+          all.firstWhere((m) => m.title == 'Notes A'),
+          folderId: ch1.id,
+          displayOrder: 3, // end of Chapter 1 (C=1, B=2), like the app does
+        );
+        await teacher.deleteFolder(ch2.id);
+        expect((await teacher.loadFolders(batch.id)).map((f) => f.id), [
+          ch1.id,
+        ]);
+
+        // Student: nothing before approval, everything in order after.
+        final email =
+            'it-${Random().nextInt(1 << 30)}@${env['GYANIFY_IT_DOMAIN'] ?? 'example.com'}';
+        await studentClient.auth.signUp(
+          email: email,
+          password: 'it-password-${Random().nextInt(1 << 30)}',
+          data: {'display_name': 'IT Folder Student'},
+        );
+        await student.requestEnrollment(batch.id);
+        expect(await student.loadFolders(batch.id), isEmpty);
+        expect(await student.loadMaterials(batch.id), isEmpty);
+        final request = (await teacher.loadEnrollmentRequests()).firstWhere(
+          (r) => r.batchId == batch.id,
+        );
+        await teacher.reviewEnrollment(request.id, 'approved');
+        expect((await student.loadFolders(batch.id)).map((f) => f.title), [
+          'Chapter 1 – Greetings',
+        ]);
+        expect(titlesIn(await student.loadMaterials(batch.id), ch1.id), [
+          'Video C',
+          'Video B',
+          'Notes A',
+        ]);
+
+        for (final m in await teacher.loadMaterials(batch.id)) {
+          await teacher.deleteMaterial(m);
+        }
+      } finally {
+        if (courseId != null) {
+          await teacherClient.from('courses').delete().eq('id', courseId);
+        }
+        await teacherClient.dispose();
+        await studentClient.dispose();
+      }
+    },
+    skip: skip,
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 }

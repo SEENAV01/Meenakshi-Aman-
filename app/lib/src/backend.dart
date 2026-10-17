@@ -50,6 +50,52 @@ class EnrollmentRequest {
   final String status;
 }
 
+/// Thrown when the app needs a database change the owner has not run yet.
+class SetupRequiredException implements Exception {
+  const SetupRequiredException(this.migrationFile);
+
+  final String migrationFile;
+
+  @override
+  String toString() =>
+      'The database needs an update. In Supabase, open SQL Editor and run '
+      'supabase/migrations/$migrationFile, then try again.';
+}
+
+const foldersMigration = '202610180001_material_folders.sql';
+
+/// Maps "table/column does not exist" errors to [SetupRequiredException].
+Future<T> requireMigration<T>(
+  String migrationFile,
+  Future<T> Function() run,
+) async {
+  try {
+    return await run();
+  } on PostgrestException catch (error) {
+    // PGRST205 missing table, PGRST204 missing column (write),
+    // 42703 missing column (read), 42P01 missing relation.
+    if (const {'PGRST205', 'PGRST204', '42703', '42P01'}.contains(error.code)) {
+      throw SetupRequiredException(migrationFile);
+    }
+    rethrow;
+  }
+}
+
+/// A chapter inside a batch, e.g. "Chapter 1 – Greetings".
+class MaterialFolder {
+  const MaterialFolder({
+    required this.id,
+    required this.batchId,
+    required this.title,
+    required this.displayOrder,
+  });
+
+  final String id;
+  final String batchId;
+  final String title;
+  final int displayOrder;
+}
+
 class LearningMaterial {
   const LearningMaterial({
     required this.id,
@@ -58,6 +104,8 @@ class LearningMaterial {
     required this.description,
     this.storagePath,
     this.youtubeUrl,
+    this.folderId,
+    this.displayOrder = 0,
   });
 
   final String id;
@@ -66,6 +114,10 @@ class LearningMaterial {
   final String description;
   final String? storagePath;
   final String? youtubeUrl;
+
+  /// null = not in a folder (added before folders existed).
+  final String? folderId;
+  final int displayOrder;
 
   bool get isPdf => kind == 'pdf';
   bool get isVideo => kind == 'youtube_video';
@@ -122,7 +174,7 @@ class GyanifyBackend {
     final rows = await client
         .from('courses')
         .select('id,title,description,batches(id,title,course_id)')
-        .order('title');
+        .order('title', ascending: true);
     final courses = rows
         .map((row) {
           final courseId = row['id'] as String;
@@ -161,7 +213,7 @@ class GyanifyBackend {
     final rows = await client
         .from('courses')
         .select('id,title,description,batches(id,title,course_id)')
-        .order('title');
+        .order('title', ascending: true);
     return rows
         .map((row) {
           final courseTitle = row['title'] as String;
@@ -235,12 +287,18 @@ class GyanifyBackend {
   }
 
   Future<List<LearningMaterial>> loadMaterials(String batchId) async {
-    final rows = await client
-        .from('learning_materials')
-        .select('id,kind,title,description,storage_path,youtube_url')
-        .eq('batch_id', batchId)
-        .order('display_order')
-        .order('created_at', ascending: false);
+    final rows = await requireMigration(
+      foldersMigration,
+      () => client
+          .from('learning_materials')
+          .select(
+            'id,kind,title,description,storage_path,youtube_url,'
+            'folder_id,display_order',
+          )
+          .eq('batch_id', batchId)
+          .order('display_order', ascending: true)
+          .order('created_at', ascending: true),
+    );
     return rows
         .map(
           (row) => LearningMaterial(
@@ -250,10 +308,106 @@ class GyanifyBackend {
             description: row['description'] as String,
             storagePath: row['storage_path'] as String?,
             youtubeUrl: row['youtube_url'] as String?,
+            folderId: row['folder_id'] as String?,
+            displayOrder: row['display_order'] as int,
           ),
         )
         .toList(growable: false);
   }
+
+  Future<List<MaterialFolder>> loadFolders(String batchId) async {
+    final rows = await requireMigration(
+      foldersMigration,
+      () => client
+          .from('material_folders')
+          .select('id,batch_id,title,display_order')
+          .eq('batch_id', batchId)
+          .order('display_order', ascending: true)
+          .order('created_at', ascending: true),
+    );
+    return rows
+        .map(
+          (row) => MaterialFolder(
+            id: row['id'] as String,
+            batchId: row['batch_id'] as String,
+            title: row['title'] as String,
+            displayOrder: row['display_order'] as int,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> createFolder({
+    required String batchId,
+    required String title,
+    required int displayOrder,
+  }) async {
+    final user = client.auth.currentUser;
+    if (user == null) throw const AuthException('Please sign in again.');
+    await requireMigration(
+      foldersMigration,
+      () => client.from('material_folders').insert({
+        'batch_id': batchId,
+        'created_by': user.id,
+        'title': title.trim(),
+        'display_order': displayOrder,
+      }),
+    );
+  }
+
+  Future<void> renameFolder(String folderId, String title) => requireMigration(
+    foldersMigration,
+    () => client
+        .from('material_folders')
+        .update({'title': title.trim()})
+        .eq('id', folderId),
+  );
+
+  /// Fails (foreign key) while the folder still has materials.
+  Future<void> deleteFolder(String folderId) => requireMigration(
+    foldersMigration,
+    () => client.from('material_folders').delete().eq('id', folderId),
+  );
+
+  /// Saves [ordered] as the new order (0, 1, 2, ...).
+  Future<void> reorderFolders(List<MaterialFolder> ordered) => requireMigration(
+    foldersMigration,
+    () => Future.wait([
+      for (var i = 0; i < ordered.length; i++)
+        if (ordered[i].displayOrder != i)
+          client
+              .from('material_folders')
+              .update({'display_order': i})
+              .eq('id', ordered[i].id),
+    ]),
+  );
+
+  /// Saves [ordered] (the items of one folder) as the new order.
+  Future<void> reorderMaterials(List<LearningMaterial> ordered) =>
+      requireMigration(
+        foldersMigration,
+        () => Future.wait([
+          for (var i = 0; i < ordered.length; i++)
+            if (ordered[i].displayOrder != i)
+              client
+                  .from('learning_materials')
+                  .update({'display_order': i})
+                  .eq('id', ordered[i].id),
+        ]),
+      );
+
+  /// Puts [material] at the end of [folderId] (null = no folder).
+  Future<void> moveMaterial(
+    LearningMaterial material, {
+    required String? folderId,
+    required int displayOrder,
+  }) => requireMigration(
+    foldersMigration,
+    () => client
+        .from('learning_materials')
+        .update({'folder_id': folderId, 'display_order': displayOrder})
+        .eq('id', material.id),
+  );
 
   Future<String> createCourse(String title, String description) async {
     final user = client.auth.currentUser;
@@ -315,6 +469,8 @@ class GyanifyBackend {
     required String description,
     required String fileName,
     required Uint8List bytes,
+    String? folderId,
+    int displayOrder = 0,
   }) async {
     final user = client.auth.currentUser;
     if (user == null) throw const AuthException('Please sign in again.');
@@ -331,15 +487,21 @@ class GyanifyBackend {
           ),
         );
     try {
-      await client.from('learning_materials').insert({
-        'batch_id': batchId,
-        'created_by': user.id,
-        'kind': 'pdf',
-        'title': title.trim(),
-        'description': description.trim(),
-        'storage_path': storagePath,
-      });
-    } on PostgrestException catch (error, stackTrace) {
+      await requireMigration(
+        foldersMigration,
+        () => client.from('learning_materials').insert({
+          'batch_id': batchId,
+          'created_by': user.id,
+          'kind': 'pdf',
+          'title': title.trim(),
+          'description': description.trim(),
+          'storage_path': storagePath,
+          'folder_id': folderId,
+          'display_order': displayOrder,
+        }),
+      );
+    } on Exception catch (error, stackTrace) {
+      // No row means nobody can ever open the file, so don't keep it.
       await client.storage.from('learning-materials').remove([storagePath]);
       Error.throwWithStackTrace(error, stackTrace);
     }
@@ -351,17 +513,24 @@ class GyanifyBackend {
     required String title,
     required String description,
     required String youtubeUrl,
+    String? folderId,
+    int displayOrder = 0,
   }) async {
     final user = client.auth.currentUser;
     if (user == null) throw const AuthException('Please sign in again.');
-    await client.from('learning_materials').insert({
-      'batch_id': batchId,
-      'created_by': user.id,
-      'kind': 'youtube_video',
-      'title': title.trim(),
-      'description': description.trim(),
-      'youtube_url': youtubeUrl,
-    });
+    await requireMigration(
+      foldersMigration,
+      () => client.from('learning_materials').insert({
+        'batch_id': batchId,
+        'created_by': user.id,
+        'kind': 'youtube_video',
+        'title': title.trim(),
+        'description': description.trim(),
+        'youtube_url': youtubeUrl,
+        'folder_id': folderId,
+        'display_order': displayOrder,
+      }),
+    );
   }
 
   Future<void> deleteMaterial(LearningMaterial material) async {
@@ -408,7 +577,7 @@ class GyanifyBackend {
         .not('meeting_url', 'is', null)
         .neq('status', 'cancelled')
         .gte('starts_at', since)
-        .order('starts_at');
+        .order('starts_at', ascending: true);
     return rows
         .map((row) {
           final batch = row['batches'] as Map<String, dynamic>;

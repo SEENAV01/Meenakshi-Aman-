@@ -14,6 +14,10 @@ Kabhi bhi `service_role` / secret key app, repo ya chat mein mat daaliye. Sirf *
    `supabase/migrations/202610170001_youtube_meet_links_hardening.sql` copy → SQL Editor → *Run*.
    Isse Meet/Zoom link, YouTube link, student email aur extra security aayegi.
    Do baar chalayenge to "already exists" error aayega — matlab pehle hi chal chuki hai, theek hai.
+2b. **Teesri SQL file — folders / chapters (zaroori, ek hi baar):** same tarah
+   `supabase/migrations/202610180001_material_folders.sql` copy → SQL Editor → *Run*.
+   Jab tak ye nahi chalegi, batch kholne par app likhega "The database needs an update…"
+   (crash nahi hoga). Pehle wali files (1 aur 2) is se pehle chal chuki honi chahiye.
 3. **Email confirmation OFF:** *Authentication* → *Sign In / Providers* → *Email* →
    **Confirm email** ka toggle OFF → *Save*. (Approval aapke haath mein hai, isliye ye safe hai.)
 4. **Redirect URL:** *Authentication* → *URL Configuration* → *Redirect URLs* → *Add URL* →
