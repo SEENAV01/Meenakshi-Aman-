@@ -36,6 +36,11 @@ const TEACHER_PASSWORD = env('SECTEST_TEACHER_PASSWORD');
 const STUDENT_DOMAIN = process.env.SECTEST_STUDENT_EMAIL_DOMAIN || '';
 const BUCKET = 'learning-materials';
 const PREFIX = '[SECTEST]';
+// Each run marks its own course, so two runs never delete each other's data.
+const RUN_ID = randomBytes(4).toString('hex');
+const COURSE_TITLE = `${PREFIX} ${RUN_ID} delete me`;
+// Leftovers from a crashed run are only removed once they are this old.
+const STALE_MS = 60 * 60 * 1000;
 const PDF_BYTES = Buffer.from(
   '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
     '2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
@@ -83,6 +88,15 @@ const rest = (method, table, opts = {}) =>
     headers: { Prefer: 'return=representation', ...(opts.headers ?? {}) },
   });
 
+// Like must(), but a write that changed no row (silently blocked) also fails.
+function mustRow(r, what) {
+  const json = must(r, what);
+  if (!Array.isArray(json) || json.length === 0) {
+    throw new Error(`${what} changed no row: the teacher could not see it (did another run delete the test data?)`);
+  }
+  return json;
+}
+
 function must(r, what) {
   if (!ok2xx(r)) {
     throw new Error(`${what} failed: HTTP ${r.status} ${JSON.stringify(r.json)}`);
@@ -129,12 +143,13 @@ async function enrollmentStatus(teacher, id) {
   return must(r, 'teacher reads enrollment')[0]?.status ?? 'missing';
 }
 
-async function cleanup(teacher) {
-  const r = await rest(
-    'GET',
-    `courses?select=id,batches(id)&teacher_id=eq.${teacher.id}&title=like.${encodeURIComponent(PREFIX)}*`,
-    { token: teacher.token },
-  );
+// Deletes this run's course ({ courseId }) or stale leftovers ({ stale: true }).
+async function cleanup(teacher, { courseId, stale = false }) {
+  let filter = `teacher_id=eq.${teacher.id}&title=like.${encodeURIComponent(PREFIX)}*`;
+  if (courseId) filter += `&id=eq.${courseId}`;
+  else if (stale) filter += `&created_at=lt.${new Date(Date.now() - STALE_MS).toISOString()}`;
+  else return;
+  const r = await rest('GET', `courses?select=id,batches(id)&${filter}`, { token: teacher.token });
   for (const course of r.json ?? []) {
     for (const batch of course.batches ?? []) {
       const list = await call('POST', `/storage/v1/object/list/${BUCKET}`, {
@@ -153,19 +168,32 @@ async function cleanup(teacher) {
   }
 }
 
+// Students cannot delete a course (checked separately), so if the teacher no
+// longer sees it, something outside this run removed it: stop instead of
+// reporting misleading failures or empty "passes".
+async function assertSetupIntact(teacher, courseId) {
+  const r = await rest('GET', `courses?select=id&id=eq.${courseId}`, { token: teacher.token });
+  if (!Array.isArray(r.json) || r.json.length !== 1) {
+    throw new Error(
+      'Test data vanished during the run. Was another security test running at the same time ' +
+        'with the same teacher account? Run it again on its own.',
+    );
+  }
+}
+
 async function main() {
   console.log(`Gyanify security test against ${new URL(BASE).host}`);
   const teacher = await signIn(TEACHER_EMAIL, TEACHER_PASSWORD);
   if ((await role(teacher)) !== 'teacher_admin') {
     throw new Error('SECTEST_TEACHER_EMAIL is not a teacher_admin. Run the promote SQL first.');
   }
-  await cleanup(teacher);
+  await cleanup(teacher, { stale: true });
 
   // ---------- Setup: course, batch, PDF, video, live class ----------
   const course = must(
     await rest('POST', 'courses', {
       token: teacher.token,
-      body: { teacher_id: teacher.id, title: `${PREFIX} delete me`, description: 'automated test' },
+      body: { teacher_id: teacher.id, title: COURSE_TITLE, description: 'automated test' },
     }),
     'teacher creates course',
   )[0];
@@ -282,11 +310,11 @@ async function main() {
     check('student cannot insert an already-approved request', !ok2xx(selfApprove), `HTTP ${selfApprove.status}`);
 
     // Teacher decides.
-    must(await rest('PATCH', `enrollments?id=eq.${rejReq.id}`, {
+    mustRow(await rest('PATCH', `enrollments?id=eq.${rejReq.id}`, {
       token: teacher.token,
       body: { status: 'rejected', reviewed_at: new Date().toISOString() },
     }), 'teacher rejects');
-    must(await rest('PATCH', `enrollments?id=eq.${appReq.id}`, {
+    mustRow(await rest('PATCH', `enrollments?id=eq.${appReq.id}`, {
       token: teacher.token,
       body: { status: 'approved', reviewed_at: new Date().toISOString() },
     }), 'teacher approves');
@@ -372,14 +400,15 @@ async function main() {
       await rest('DELETE', `learning_materials?batch_id=eq.${batch.id}`, { token: s.token });
       await call('DELETE', `/storage/v1/object/${BUCKET}`, { token: s.token, body: { prefixes: [pdfPath] } });
     }
+    await assertSetupIntact(teacher, course.id);
     const after = must(await rest('GET', `courses?select=title&id=eq.${course.id}`, { token: teacher.token }), 'reread course');
-    check('course title unchanged by students', after[0]?.title === `${PREFIX} delete me`, JSON.stringify(after));
+    check('course title unchanged by students', after[0]?.title === COURSE_TITLE, JSON.stringify(after));
     const matsAfter = must(await rest('GET', `learning_materials?select=id&batch_id=eq.${batch.id}`, { token: teacher.token }), 'reread materials');
     check('materials not deleted by students', matsAfter.length === 2, `${matsAfter.length} rows`);
     const folderAfter = must(await rest('GET', `material_folders?select=title,display_order&id=eq.${folder.id}`, { token: teacher.token }), 'reread folder');
     check('folder not renamed, reordered or deleted by students', folderAfter.length === 1 && folderAfter[0].title === `${PREFIX} Chapter 1` && folderAfter[0].display_order === 0, JSON.stringify(folderAfter));
     const placed = must(await rest('GET', `learning_materials?select=folder_id,display_order&batch_id=eq.${batch.id}&order=display_order`, { token: teacher.token }), 'reread placement');
-    check('materials not moved or reordered by students', placed.every((m, i) => m.folder_id === folder.id && m.display_order === i), JSON.stringify(placed));
+    check('materials not moved or reordered by students', placed.length === 2 && placed.every((m, i) => m.folder_id === folder.id && m.display_order === i), JSON.stringify(placed));
     const fileAfter = await call('GET', `/storage/v1/object/authenticated/${BUCKET}/${pdfPath}`, { token: teacher.token, raw: true });
     check('PDF not deleted by students', ok2xx(fileAfter), `HTTP ${fileAfter.status}`);
 
@@ -391,6 +420,7 @@ async function main() {
     const anonFile = await call('GET', `/storage/v1/object/public/${BUCKET}/${pdfPath}`, { raw: true });
     check('anon cannot download the PDF', !ok2xx(anonFile), `HTTP ${anonFile.status}`);
 
+    await assertSetupIntact(teacher, course.id);
     console.log('\n6. Positive control: approved student DOES get access (proves the test is real)');
     const goodMats = await rest('GET', `learning_materials?select=kind&batch_id=eq.${batch.id}`, { token: approved.token });
     const goodFolders = await rest('GET', `material_folders?select=id,title&batch_id=eq.${batch.id}`, { token: approved.token });
@@ -407,7 +437,7 @@ async function main() {
     check('approved student downloads the PDF via signed link', downloaded, `sign HTTP ${goodSign.status}`);
 
     console.log('\n7. Teacher removes access -> student loses it');
-    must(await rest('PATCH', `enrollments?id=eq.${appReq.id}`, {
+    mustRow(await rest('PATCH', `enrollments?id=eq.${appReq.id}`, {
       token: teacher.token,
       body: { status: 'revoked', reviewed_at: new Date().toISOString() },
     }), 'teacher revokes');
@@ -441,7 +471,7 @@ async function main() {
     const blank = await rest('POST', 'material_folders', { token: teacher.token, body: { batch_id: batch.id, created_by: teacher.id, title: '   ' } });
     check('a folder needs a real title', !ok2xx(blank), `HTTP ${blank.status}`);
   } finally {
-    await cleanup(teacher);
+    await cleanup(teacher, { courseId: course.id });
   }
 
   console.log(`\n${passed} passed, ${failures.length} failed`);

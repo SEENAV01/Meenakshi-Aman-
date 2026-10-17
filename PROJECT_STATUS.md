@@ -141,6 +141,19 @@ Not verified:
   back after approval); `security_test.mjs` 54 passed.
 - Not verified: on a real phone; on the live Supabase.
 
+### 2026-10-17 — live security test runs #7/#8 failed (not a security gap)
+
+- Runs #7 and #8 were started 13 s apart with the same test teacher. Each run deleted all
+  "[SECTEST]" courses at start and end, so each wiped the other's test data mid-run. Every
+  failed check was "teacher can't see own course/folder/PDF" or the approved-student positive
+  control; no "student cannot …" check failed.
+- Fixed in the test, no migration needed: each run tags its own course, deletes only that
+  course (plus leftovers older than 1 hour), stops with a clear message if its data vanishes,
+  requires teacher approve/reject/revoke to change a row, and the "materials not moved" check
+  needs both items. The live job now has a concurrency group (one run at a time).
+- Verified locally: two copies of the OLD test started 0.2 s apart broke 3/3 times (same
+  errors); two copies of the NEW test passed 54/54 each, 3/3 times, leaving no test course.
+
 ## Owner setup required
 
 See the numbered list in the final report of the 2026-10-17 session (also repeated in

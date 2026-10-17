@@ -78,6 +78,11 @@ jobs:
 
   live:
     runs-on: ubuntu-24.04
+    # One live run at a time: two runs share the test teacher account and
+    # would otherwise delete each other's test data (runs #7 and #8).
+    concurrency:
+      group: security-test-live
+      cancel-in-progress: false
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
