@@ -23,6 +23,8 @@ question at a time and only when truly blocked.
 - CI: `.github/workflows/android-apk.yml` builds the APK on every push to `main`
   and publishes it on the GitHub Release named `latest`.
   `.github/workflows/security-test.yml` runs the security test (local stack + live project).
+  Both are pinned to `runs-on: ubuntu-24.04` (not ubuntu-latest) and use actions/checkout@v7,
+  setup-java@v6, setup-node@v7 (Node 24) and subosito/flutter-action@v2 (composite).
 
 ## Product decisions (do not change without the owner)
 - Videos: Unlisted YouTube links, played inside the app. Never store video files in Supabase.
